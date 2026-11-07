@@ -1,0 +1,27 @@
+{
+  "name": "CupheadVR",
+  "steam_appid": 268910,
+  "game_dir": "E:\\SteamLibrary\\steamapps\\common\\Cuphead",
+  "exe": "Cuphead.exe",
+  "launch": "exe",
+  "launch_timeout_s": 120,
+  "xr_runtime_json": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\SteamVR\\steamxr_win64.json",
+  "log": "BepInEx\\LogOutput.log",
+  "command_file": "vrlab_command.txt",
+  "deploy": [
+    {
+      "from": "build\\CupheadVR.dll",
+      "to": "BepInEx\\plugins\\CupheadVR\\CupheadVR.dll"
+    }
+  ],
+  "riga": {
+    "drop": "\\\\STEVE-OFFICE\\VRDrop",
+    "game": "CupheadVR",
+    "files": [
+      {
+        "from": "build\\CupheadVR.dll",
+        "name": "CupheadVR.dll"
+      }
+    ]
+  }
+}
