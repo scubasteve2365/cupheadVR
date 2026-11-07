@@ -9,13 +9,13 @@ using UnityEngine.SceneManagement;
 
 namespace CupheadVR
 {
-    // Build 4: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
+    // CupheadVR 1.0: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
     // layers, smooth motion at any headset rate, and an in-headset menu (hold both sticks). VR starts by itself unless
     // VR.AutoStart is off; if OpenXR cannot start, the game stays flat. Lab probes stay available behind Lab.Commands.
-    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "0.0.5")]
+    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.0")]
     public class Plugin : BaseUnityPlugin
     {
-        internal const string Version = "0.0.5 (build 5)";
+        internal const string Version = "1.0";
         internal static BepInEx.Logging.ManualLogSource Log;
         internal static ConfigEntry<bool> BlockSaves;
         internal static ConfigEntry<float> Grain, Fringe;
@@ -23,8 +23,9 @@ namespace CupheadVR
         internal static bool RigActive { get { return instance != null && instance.rig.Active; } }
         static Plugin instance;
 
-        const float DefaultWidth = 1.85f, DefaultDistance = 1.0f, DefaultDepth = 1.5f, DefaultSky = 0.9f, DefaultSharpen = 0.3f,
-            DefaultPop = 1.0f, DefaultPopOut = 0.2f;
+        // Defaults are Steve's own settings from his headset tests (RigA, 2026-11-07).
+        const float DefaultWidth = 2.15f, DefaultDistance = 1.25f, DefaultDepth = 1.3f, DefaultSky = 0.75f, DefaultSharpen = 1.0f,
+            DefaultPop = 1.2f, DefaultPopOut = 0.75f, DefaultGrain = 0f, DefaultFringe = 0f;
         ConfigEntry<bool> labCommands, autoDump, autoStart, smooth, edgeMatch;
         ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution, characterPop;
         ConfigEntry<int> clickVolume;
@@ -54,8 +55,8 @@ namespace CupheadVR
             edgeMatch = Config.Bind("VR", "EdgeMatch", true, "Trim each eye's outer edge so both eyes see the same picture at the stage edges.");
             sharpen = Config.Bind("VR", "Sharpen", DefaultSharpen, "Strength of the sharpening pass, 0 is off.");
             resolution = Config.Bind("VR", "ResolutionScale", 1.0f, "1 matches the headset's pixel density across the stage.");
-            Grain = Config.Bind("Picture", "FilmGrain", 1.0f, "Film grain and scratches, 1 is the game's own amount, 0 is off.");
-            Fringe = Config.Bind("Picture", "ColorFringe", 1.0f, "The game's colour fringing at the edges, 1 is the game's own amount, 0 is off.");
+            Grain = Config.Bind("Picture", "FilmGrain", DefaultGrain, "Film grain and scratches, 1 is the game's own amount, 0 is off.");
+            Fringe = Config.Bind("Picture", "ColorFringe", DefaultFringe, "The game's colour fringing at the edges, 1 is the game's own amount, 0 is off.");
             clickVolume = Config.Bind("Menu", "ClickVolume", 2, "Menu click sounds: 0 off, 1 low, 2 medium, 3 high.");
             commandFile = Path.Combine(Paths.GameRootPath, "vrlab_command.txt");
             OutDir = Path.Combine(Paths.GameRootPath, "vrlab_dumps");
@@ -122,7 +123,7 @@ namespace CupheadVR
             stage.Rows.Add(Value("Stage distance", stageDistance, 0.05f, 0.5f, 10f, () => M(stageDistance.Value), "How far away the stage stands. The picture keeps its depth; only where it sits changes."));
             stage.Rows.Add(Value("Stage size", stageWidth, 0.05f, 0.5f, 10f, () => M(stageWidth.Value) + " wide", "How wide the stage is. Bigger is like sitting closer to a cinema screen."));
             stage.Rows.Add(new MenuUI.Row { Label = "Reset the stage", Press = () => { stageDistance.Value = DefaultDistance; stageWidth.Value = DefaultWidth; PushSettings(); rig.Recenter(); LogSettings(); },
-                Help = () => "Press A to put the stage back to 1.85 m wide at 1 m, straight ahead." });
+                Help = () => "Press A to put the stage back to 2.15 m wide at 1.25 m, straight ahead." });
 
             var depthTab = new MenuUI.Tab { Name = "Depth" };
             depthTab.Rows.Add(Value("Layer depth", depth, 0.1f, 0.5f, 3f, () => Pct(depth.Value), "How far apart the background layers spread. 100% is the game's own spacing. Higher pushes the middle layers further back, but never past the horizon."));
@@ -167,8 +168,8 @@ namespace CupheadVR
             resolution.Value = 1f;
             smooth.Value = true;
             edgeMatch.Value = true;
-            Grain.Value = 1f;
-            Fringe.Value = 1f;
+            Grain.Value = DefaultGrain;
+            Fringe.Value = DefaultFringe;
             clickVolume.Value = 2;
             PushSettings();
             Log.LogInfo("MENU defaults");

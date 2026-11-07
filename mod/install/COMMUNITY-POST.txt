@@ -1,0 +1,28 @@
+**CupheadVR 1.0: Cuphead in VR as a pop-up storybook stage (free mod, OpenXR)**
+
+Cuphead on a stage floating in front of you, in true native stereo: both eyes are drawn from the same game tick, with no alternate-eye rendering and no warping. The game's own parallax layers become real depth, so the hand-painted backgrounds sit far behind, Cuphead and the bosses stand out like cut-outs, and the foreground leans out toward you. Play it seated with a gamepad.
+
+**What it does**
+- Native stereo through OpenXR, with depth taken from the game's own parallax layers
+- Smooth motion at your headset's refresh rate (72, 90, 120 Hz and up), at exactly the normal game speed
+- Resolution set from your headset's pixel density and the stage size
+- In-headset settings menu styled like the game's own cards. Hold both sticks to open it
+- Settings for stage size and distance, layer depth, character pop, pop-out, sky distance, film grain, colour fringe, sharpening and resolution
+- Installs with one bat file, and uninstalls the same way. No game files are changed
+
+**What you need**
+- The Steam version of Cuphead
+- A PC VR headset with OpenXR: SteamVR set as your OpenXR runtime, or Virtual Desktop's VDXR
+- A gamepad
+
+**Please read**
+- Tested in a real headset on a Pimax Dream Air through SteamVR. Other headsets and graphics cards should work but have not been tried. Reports are welcome.
+- The overworld map stays flat on the stage, because its art has no depth layers.
+- The mod is not signed, so Windows may warn you, and Smart App Control can block it. The README covers this.
+
+**Install**
+Unzip it, double click "Install CupheadVR.bat", and type 1. Start SteamVR or connect Virtual Desktop, then start Cuphead from Steam.
+
+**Download:** https://github.com/scubasteve2365/CupheadVR/releases/tag/v1.0
+
+By scubasteve2365. MIT licence. Uses BepInEx and the Khronos OpenXR loader. This is a fan mod, not made or approved by Studio MDHR.

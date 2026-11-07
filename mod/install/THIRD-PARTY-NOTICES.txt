@@ -1,0 +1,17 @@
+CupheadVR includes these unmodified parts. Their licences are in the licences folder.
+
+BepInEx 5.4.23.6 (x64)
+  https://github.com/BepInEx/BepInEx
+  LGPL-2.1. Includes UnityDoorstop, HarmonyX, MonoMod and Mono.Cecil under their own licences.
+  Source code is available at the link above.
+
+OpenXR loader 1.1.65 (Khronos Group)
+  https://github.com/KhronosGroup/OpenXR-SDK-Source
+  Apache-2.0.
+
+The OpenXR side and the sharpening pass come from OriVR (MIT, scubasteve2365). The sharpening pass follows the idea of
+AMD FidelityFX Contrast Adaptive Sharpening (MIT licence); it is OriVR's own code, not a copy of AMD's.
+
+The menu draws its text with the fonts the game itself has loaded. No font files are included.
+
+Cuphead belongs to Studio MDHR. This mod contains no game files.

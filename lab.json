@@ -112,6 +112,16 @@
         "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\MonoMod.Utils.dll",
         "name": "MonoMod.Utils.dll",
         "to": "BepInEx\\core\\MonoMod.Utils.dll"
+      },
+      {
+        "from": "build\\package\\CupheadVR-1.0.zip",
+        "name": "CupheadVR-1.0.zip",
+        "to": "CupheadVR-installer\\CupheadVR-1.0.zip"
+      },
+      {
+        "from": "mod\\install\\COMMUNITY-POST.txt",
+        "name": "COMMUNITY-POST.txt",
+        "to": "CupheadVR-installer\\COMMUNITY-POST.txt"
       }
     ]
   }
