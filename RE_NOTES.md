@@ -190,3 +190,12 @@ first visible strip (column 70) matches the right eye at column 0 (error 8.5), a
 left eye's last columns (error 11.9). Eye check 0 of 7,290,000, restore errors 0, 144 fps.
 Side effect: at large pop-out the HP card at the bottom left loses a few pixels in the left eye (it sits on the stage
 plane, behind the floating frame). Evidence: evidence\CupheadVR\2026-11-07\b5\edges_compare.png.
+
+## 1.0 (live on RigB, 2026-11-07)
+
+Defaults are Steve's headset settings. HP and super cards (`LevelHUDPlayer`, anchored bottom left or right) move in by
+3.5% of the HUD width (44.8 of 1280) so the edge trim never cuts them; with his settings on Root Pack the trim is 1.7%
+and the HP card sits well clear in the left eye (evidence\CupheadVR\2026-11-07\v10\hp_left_eye.png). Log says
+CupheadVR 1.0.0, XR state 5, eye check 0 of 7,290,000, restore errors 0. Installer: install and uninstall from
+`odd path's [test] & more` with every file marked as downloaded; uninstall leaves the game folder as Steam installed it,
+install unblocks every file. Zip build\package\CupheadVR-1.0.zip, not published.
