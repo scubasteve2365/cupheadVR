@@ -106,3 +106,26 @@ Script `tools\stereo_check.py` (32 px block matching). Images: `evidence\Cuphead
 
 Signs are right: foreground in front, background behind. The few dy of ±1 to ±4 are patches matched on film grain.
 Same frame by construction (both eyes rendered in one end-of-frame).
+
+## Build 2: OpenXR stage (live on RigB, 2026-11-07)
+
+Native DLL ported from OriVRNative to 64-bit (Khronos loader 1.1.65 x64). New: a black 16x16 projection layer behind
+the stage (no runtime home around it), and the reference-space-change event passed on as a recenter. C# rig: per eye,
+every parallax transform moves by eye offset x speed (head tracked, so leaning gives motion parallax too), then the whole
+camera stack renders into the eye texture. Skies without a parallax speed (MinMax ParallaxLayer at 0, Background
+sprites with sorting order -500 or lower) get Sky distance (default 0.85).
+
+| Check | Result | Evidence |
+|---|---|---|
+| OpenXR on SteamVR 2.18.4 null driver | session state 5, 144.0 fps at 3872x2178 per eye, 1 skipped frame at start | LogOutput XRSTAT lines |
+| Eye check (both eyes at one spot, 4 frames) | 0 of 8,433,216 pixels differ | EYECHECK line |
+| Stereo, Root Pack, tracked eyes | dy 0 on 287 of 311 patches; foreground -13, background +18, sky +37 px at 1291 wide (expected sky 0.85 x 44 = 37) | evidence\CupheadVR\2026-11-07\xr |
+| Menu | opens, rows change values, game font CupheadMemphis-Medium, drawn in front of the stage | xr\scene_level_veggies_f6241_L_view.png |
+
+Found live: the game sets `targetFrameRate` 60 and vsync again on every level load. The rig lifts both each frame while VR runs.
+
+Game speed: the player moves in `FixedUpdate` by `CupheadTime.FixedDelta` (LevelPlayerMotor.cs, static), so with the
+game's own 1/60 s step its speed does not depend on the frame rate. Motion updates 60 times a second while the headset
+shows 72 to 144, which may look juddery: not verified. The `match 1` lab command sets one fixed step per headset frame
+(Ori's approach), but measuring run speed and jump height failed this session: the lab's virtual pad joined as Player 2
+and then disconnected, and keyboard arrows did not move the player. So build 2 ships with the game's 1/60 step.
