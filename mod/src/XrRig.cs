@@ -267,8 +267,34 @@ namespace CupheadVR
             xSetStage(c.x, c.y, c.z, StageWidth, StageWidth * 9f / 16f, viewTurn.y, viewTurn.w);
         }
 
+        // The HP and super cards sit at the stage's bottom corners. With Edge match on, the outer edges are trimmed, so
+        // the cards move in by HudInset of the HUD width (LevelHUDPlayer, anchored to the bottom left or bottom right).
+        internal float HudInset = 0.035f;
+        readonly HashSet<int> hudMoved = new HashSet<int>();
+        int hudCheckFrame;
+
+        void InsetHud()
+        {
+            if (!active || HudInset <= 0f || Time.frameCount < hudCheckFrame) return;
+            hudCheckFrame = Time.frameCount + 30;
+            var hud = LevelHUD.Current;
+            if (hud == null || hud.Canvas == null) return;
+            var canvasRect = hud.Canvas.GetComponent<RectTransform>();
+            float width = canvasRect != null ? canvasRect.rect.width : 1280f;
+            foreach (var p in hud.GetComponentsInChildren<LevelHUDPlayer>(true))
+            {
+                if (!hudMoved.Add(p.GetInstanceID())) continue;
+                var rt = p.GetComponent<RectTransform>();
+                if (rt == null) continue;
+                float dir = rt.anchorMin.x < 0.5f ? 1f : -1f;
+                rt.anchoredPosition += new Vector2(dir * HudInset * width, 0f);
+                Plugin.Log.LogInfo(string.Format(System.Globalization.CultureInfo.InvariantCulture, "HUD {0} moved in by {1:F1} of {2:F0}", p.name, HudInset * width, width));
+            }
+        }
+
         void Update()
         {
+            InsetHud();
             if (!nativeLoaded) return;
             while (xPopLog(logBuf, logBuf.Capacity) != 0)
             {
