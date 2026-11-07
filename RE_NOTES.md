@@ -173,3 +173,20 @@ Menu row added: Smooth motion On/Off (default On, config VR.SmoothMotion).
   CupheadVogue-Bold-merged (not bundled).
 - Lab trap: commands queued while the game is not running sit in vrlab_command.txt and run at the next start (a stale
   `menu` opened the menu and paused the game on its boot screen). Delete the file before launching.
+
+## Build 5: edge match (live on RigB, 2026-11-07)
+
+Steve (RigA, build 4): at the stage edges the left eye saw a little more on the left and the right eye more on the right.
+His settings then: stage 2.15 m at 1.25 m, layer depth 1.30, character pop 1.20, pop-out 0.75, sky 0.75, grain 0,
+fringe 0, sharpen 1.0. With pop-out 0.75 the whole scene sits in front of the stage frame (window violation).
+
+Fix: each eye's outer edge is covered in black by how far the nearest layer moves in that eye (relative speed
+f = min(effective speed) - pop-out, trim = eye shift x f of the view), so the frame floats at the nearest layer's depth.
+Menu row Edge match (config VR.EdgeMatch, default on).
+
+Check on Funfair Fever with his settings, 3600 wide eyes: trim 0.0196 of the width each side (70 px). Edge off: the
+16-px strip at the left edge of the left eye has no match in the right eye (best error 25). Edge on: the left eye's
+first visible strip (column 70) matches the right eye at column 0 (error 8.5), and the right eye's last strip matches the
+left eye's last columns (error 11.9). Eye check 0 of 7,290,000, restore errors 0, 144 fps.
+Side effect: at large pop-out the HP card at the bottom left loses a few pixels in the left eye (it sits on the stage
+plane, behind the floating frame). Evidence: evidence\CupheadVR\2026-11-07\b5\edges_compare.png.
