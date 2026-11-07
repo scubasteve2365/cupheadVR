@@ -129,3 +129,27 @@ game's own 1/60 s step its speed does not depend on the frame rate. Motion updat
 shows 72 to 144, which may look juddery: not verified. The `match 1` lab command sets one fixed step per headset frame
 (Ori's approach), but measuring run speed and jump height failed this session: the lab's virtual pad joined as Player 2
 and then disconnected, and keyboard arrows did not move the player. So build 2 ships with the game's 1/60 step.
+
+## Build 3: smooth motion at headset rate (live on RigB, 2026-11-07)
+
+Stepping the game at the headset rate (Ori's way) is not safe here. Static read of the decompile: 126 scripts have
+FixedUpdate, and a crude scan finds 44 whose FixedUpdate body never names a delta. Some of those really count steps,
+for example `CharmFloatWingsFX` (`position += vel` each step) and `FlyingBirdLevelNursePill` (`velocity.y -= 10` each
+step). At 120 steps a second those would run twice as fast.
+
+So the game keeps its own 1/60 s step (game speed unchanged by construction, `fixedDelta 0.01667` in PROBE), and the rig
+interpolates for drawing: after each fixed step it records every renderer's transform and its parents. At each rendered
+frame, anything still exactly where the last step left it is drawn between its last two positions,
+`alpha = (Time.time - Time.fixedTime) / fixedDeltaTime` (one step behind, like Unity's rigidbody interpolation), then
+put back. Things moved in Update or LateUpdate (camera, parallax, animation frames) are left alone. A move of more than
+400 units in one step counts as a jump and is not interpolated.
+
+| Root Pack, potato bullet, 144 Hz null driver | Frames with no motion | Step per frame |
+|---|---|---|
+| Smooth off | 34 of 59, 41 of 71 | mean 4.9, sd 5.8 |
+| Smooth on | 0 of 59, 0 of 71 | mean 4.86 to 4.88, sd 0.30 to 0.41 |
+
+4.86 per frame x 144 = 700 units/s, the same as 11.67 per step x 60 with smoothing off, so speed is unchanged.
+Restore check: 0 errors over about 8,000 eye pairs (depth layers back where they were after each render). Eye check
+0 of 8,433,216. 72, 90 and 120 Hz not run (the null driver runs 144 only).
+Menu row added: Smooth motion On/Off (default On, config VR.SmoothMotion).

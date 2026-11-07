@@ -21,7 +21,7 @@ namespace CupheadVR
         internal Action<int, int> Adjust;  // row, direction
         internal Action<int> Activate;     // row
         internal Action Closed;
-        internal int Rows = 10;
+        internal int Rows = 11;
         internal bool IsOpen { get; private set; }
         internal RenderTexture Texture { get { return IsOpen ? rt : null; } }
 
@@ -106,7 +106,7 @@ namespace CupheadVR
             return true;
         }
 
-        static float RowY(int row) { return 225f - row * 50f; }
+        static float RowY(int row) { return 228f - row * 46f; }
 
         static Image MakeImage(Transform parent, Color color, Vector2 size, Vector2 pos)
         {

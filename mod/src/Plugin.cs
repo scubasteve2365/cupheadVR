@@ -12,7 +12,7 @@ namespace CupheadVR
     // Build 2: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
     // layers, and an in-headset menu (hold both sticks). VR starts by itself unless VR.AutoStart is off; if OpenXR cannot
     // start, the game stays flat. Lab probes from build 1 stay available behind Lab.Commands.
-    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "0.0.2")]
+    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "0.0.3")]
     public class Plugin : BaseUnityPlugin
     {
         internal static BepInEx.Logging.ManualLogSource Log;
@@ -22,7 +22,7 @@ namespace CupheadVR
         static Plugin instance;
 
         const float DefaultWidth = 1.85f, DefaultDistance = 1.0f, DefaultDepth = 1.0f, DefaultSky = 0.85f, DefaultSharpen = 0.3f;
-        ConfigEntry<bool> labCommands, autoDump, autoStart;
+        ConfigEntry<bool> labCommands, autoDump, autoStart, smooth;
         ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution;
         string commandFile;
         int nextCommandCheck;
@@ -45,6 +45,7 @@ namespace CupheadVR
             depth = Config.Bind("VR", "Depth", DefaultDepth, "Depth strength, 1 is natural.");
             popOut = Config.Bind("VR", "PopOut", 0f, "0 keeps the play plane on the stage. Higher brings the scene toward you.");
             skyDepth = Config.Bind("VR", "SkyDepth", DefaultSky, "How far back skies without their own parallax sit, 0 on the stage, 1 very far.");
+            smooth = Config.Bind("VR", "SmoothMotion", true, "Draw moving things between the game's 60 Hz steps, so motion is smooth at any headset rate. Game speed does not change.");
             sharpen = Config.Bind("VR", "Sharpen", DefaultSharpen, "Strength of the sharpening pass, 0 is off.");
             resolution = Config.Bind("VR", "ResolutionScale", 1.0f, "1 matches the headset's pixel density across the stage.");
             commandFile = Path.Combine(Paths.GameRootPath, "vrlab_command.txt");
@@ -66,7 +67,7 @@ namespace CupheadVR
                 if (autoDump.Value) dumpAt = Time.realtimeSinceStartup + 4f;
             };
             new Harmony("com.scubasteve2365.cupheadvr").PatchAll(typeof(Plugin).Assembly);
-            Log.LogInfo("CupheadVR 0.0.2 (build 2) loaded. Unity " + Application.unityVersion + ", pointer size " + IntPtr.Size);
+            Log.LogInfo("CupheadVR 0.0.3 (build 3) loaded. Unity " + Application.unityVersion + ", pointer size " + IntPtr.Size);
         }
 
         void Update()
@@ -99,8 +100,9 @@ namespace CupheadVR
                 case 4: return string.Format(CultureInfo.InvariantCulture, "Sky distance: {0:F0}%", skyDepth.Value * 100f);
                 case 5: return string.Format(CultureInfo.InvariantCulture, "Sharpen: {0:F0}%", sharpen.Value * 100f);
                 case 6: return string.Format(CultureInfo.InvariantCulture, "Resolution: {0:F0}%   ({1} pixels wide)", resolution.Value * 100f, rig.WantedWidth());
-                case 7: return "Recenter";
-                case 8: return "Reset to defaults";
+                case 7: return "Smooth motion: " + (smooth.Value ? "On" : "Off");
+                case 8: return "Recenter";
+                case 9: return "Reset to defaults";
                 default: return "Close";
             }
         }
@@ -114,16 +116,18 @@ namespace CupheadVR
             else if (row == 4) skyDepth.Value = Mathf.Clamp(skyDepth.Value + dir * 0.05f, 0f, 1f);
             else if (row == 5) sharpen.Value = Mathf.Clamp(sharpen.Value + dir * 0.1f, 0f, 1f);
             else if (row == 6) resolution.Value = Mathf.Clamp(resolution.Value + dir * 0.1f, 0.5f, 1.5f);
+            else if (row == 7) smooth.Value = !smooth.Value;
             else return;
             PushSettings();
-            Log.LogInfo(string.Format(CultureInfo.InvariantCulture, "MENU stage {0:F2} m wide at {1:F2} m, depth {2:F2}, pop-out {3:F2}, sky {4:F2}, sharpen {5:F2}, resolution {6:F2}",
-                stageWidth.Value, stageDistance.Value, depth.Value, popOut.Value, skyDepth.Value, sharpen.Value, resolution.Value));
+            Log.LogInfo(string.Format(CultureInfo.InvariantCulture, "MENU stage {0:F2} m wide at {1:F2} m, depth {2:F2}, pop-out {3:F2}, sky {4:F2}, sharpen {5:F2}, resolution {6:F2}, smooth {7}",
+                stageWidth.Value, stageDistance.Value, depth.Value, popOut.Value, skyDepth.Value, sharpen.Value, resolution.Value, smooth.Value));
         }
 
         void MenuActivate(int row)
         {
-            if (row == 7) { rig.Recenter(); Log.LogInfo("MENU recenter"); }
-            else if (row == 8)
+            if (row == 7) { smooth.Value = !smooth.Value; PushSettings(); Log.LogInfo("MENU smooth " + smooth.Value); }
+            else if (row == 8) { rig.Recenter(); Log.LogInfo("MENU recenter"); }
+            else if (row == 9)
             {
                 stageDistance.Value = DefaultDistance;
                 stageWidth.Value = DefaultWidth;
@@ -132,10 +136,11 @@ namespace CupheadVR
                 skyDepth.Value = DefaultSky;
                 sharpen.Value = DefaultSharpen;
                 resolution.Value = 1f;
+                smooth.Value = true;
                 PushSettings();
                 Log.LogInfo("MENU defaults");
             }
-            else if (row == 9) menu.Close();
+            else if (row == 10) menu.Close();
         }
 
         void PushSettings()
@@ -147,6 +152,7 @@ namespace CupheadVR
             rig.SkyDepth = skyDepth.Value;
             rig.Sharpen = sharpen.Value;
             rig.Sharpness = resolution.Value;
+            rig.Smooth = smooth.Value;
             rig.ApplyStage();
         }
 
@@ -199,6 +205,8 @@ namespace CupheadVR
                 case "stage": stageWidth.Value = F(a[0]); stageDistance.Value = F(a[1]); PushSettings(); rig.UpdateResolution(); break;
                 case "track": probes.Track(F(arg)); break;
                 case "match": rig.MatchRefresh = arg == "1"; break;
+                case "smooth": smooth.Value = arg == "1"; PushSettings(); break;
+                case "even": rig.MeasureEven(int.Parse(arg, CultureInfo.InvariantCulture)); break;
                 case "recenter": rig.Recenter(); break;
                 case "menu": if (arg.Length == 0) { if (menu.IsOpen) menu.Close(); else menu.Open(); } else menu.LabKey(arg); break;
                 default: Log.LogWarning("unknown command " + line); break;

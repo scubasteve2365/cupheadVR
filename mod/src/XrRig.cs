@@ -78,7 +78,8 @@ namespace CupheadVR
         internal int EyeWidth = 2560, EyeHeight = 1440;
         internal bool FlipY = true, Stamp;
         internal MenuUI Menu;
-        internal bool MatchRefresh;  // one fixed game step per headset frame (Ori's way to keep motion smooth)
+        internal bool MatchRefresh;
+        internal bool Smooth = true;  // draw things the game moves in its 60 Hz steps in between steps  // one fixed game step per headset frame (Ori's way to keep motion smooth)
         float savedFixed = -1f;
 
         Vector3 viewPoint;
@@ -146,6 +147,7 @@ namespace CupheadVR
             active = true;
             Plugin.Log.LogInfo(string.Format("VR starting: eye {0}x{1}, stage {2} m wide at {3} m, depth x{4}", EyeWidth, EyeHeight, StageWidth, StageDistance, Separation));
             StartCoroutine(Loop());
+            StartCoroutine(SnapshotSteps());
         }
 
         internal void End()
@@ -291,8 +293,8 @@ namespace CupheadVR
                     uint frames, layers, skipped;
                     xStats(out frames, out layers, out skipped);
                     float span = now - (nextStat - 5f);
-                    Plugin.Log.LogInfo(string.Format("XRSTAT state {0} shouldRender {1} period {2:F2} ms, unity {3:F1} fps, submitted {4}, with images {5}, skipped {6}, pairs {7}, eye {8}x{9}",
-                        info.sessionState, info.shouldRender, info.periodMs, (Time.frameCount - framesAtStat) / span, frames, layers, skipped, renderedPairs, EyeWidth, EyeHeight));
+                    Plugin.Log.LogInfo(string.Format("XRSTAT state {0} shouldRender {1} period {2:F2} ms, unity {3:F1} fps, submitted {4}, with images {5}, skipped {6}, pairs {7}, eye {8}x{9}, smoothed {10} of {11}, restore errors {12}",
+                        info.sessionState, info.shouldRender, info.periodMs, (Time.frameCount - framesAtStat) / span, frames, layers, skipped, renderedPairs, EyeWidth, EyeHeight, Smoothed, SmoothCandidates, RestoreErrors));
                     nextStat = now + 5f;
                     framesAtStat = Time.frameCount;
                 }
@@ -350,6 +352,126 @@ namespace CupheadVR
             return depthLayers.Count + " layers, " + skyCount + " sky";
         }
 
+        // Smooth motion. Cuphead moves players, enemies and bullets in FixedUpdate, 60 steps a second, and about 40 of
+        // its scripts count steps rather than time, so stepping faster would speed the game up. Instead the game keeps
+        // its 60 Hz steps, and each rendered frame draws what moved in the last step part way between its last two
+        // positions (one step behind, like Unity's own rigidbody interpolation). Things moved in Update or LateUpdate
+        // (camera, parallax, animation) are already smooth and are left alone: only a transform still exactly where the
+        // last step left it is moved.
+        class Track { public Transform t; public int depth; public Vector3 prev, curr; public int steps; }
+        readonly List<Track> tracks = new List<Track>();
+        readonly Dictionary<Transform, Track> trackOf = new Dictionary<Transform, Track>();
+        int tracksFrame = -1000;
+        internal int Smoothed, SmoothCandidates, RestoreErrors;
+
+        IEnumerator SnapshotSteps()
+        {
+            var wait = new WaitForFixedUpdate();
+            while (active)
+            {
+                yield return wait;
+                if (Time.frameCount - tracksFrame >= 30) RefreshTracks();
+                for (int i = 0; i < tracks.Count; i++)
+                {
+                    var k = tracks[i];
+                    if (k.t == null) continue;
+                    k.prev = k.steps > 0 ? k.curr : k.t.position;
+                    k.curr = k.t.position;
+                    k.steps++;
+                }
+            }
+        }
+
+        void RefreshTracks()
+        {
+            tracksFrame = Time.frameCount;
+            var seen = new HashSet<Transform>();
+            foreach (var r in FindObjectsOfType<Renderer>())
+            {
+                if (r == null || !r.enabled) continue;
+                // The renderer and every parent: the player's motor moves a root that draws nothing itself.
+                for (var t = r.transform; t != null; t = t.parent)
+                {
+                    if (!seen.Add(t)) break;
+                    if (trackOf.ContainsKey(t)) continue;
+                    int depth = 0;
+                    for (var c = t.parent; c != null; c = c.parent) depth++;
+                    var k = new Track { t = t, depth = depth };
+                    trackOf[t] = k;
+                    tracks.Add(k);
+                }
+            }
+            tracks.RemoveAll(k => k.t == null || !seen.Contains(k.t));
+            var dead = trackOf.Keys.Where(t => t == null || !seen.Contains(t)).ToList();
+            foreach (var t in dead) trackOf.Remove(t);
+            tracks.Sort((a, b) => a.depth.CompareTo(b.depth));  // parents first, so children land where they should
+        }
+
+        // Moves tracked things to their in-between place for this render. Returns what to put back.
+        readonly List<KeyValuePair<Transform, Vector3>> smoothUndo = new List<KeyValuePair<Transform, Vector3>>();
+
+        void ApplySmooth()
+        {
+            smoothUndo.Clear();
+            Smoothed = 0;
+            SmoothCandidates = tracks.Count;
+            if (!Smooth || Time.fixedDeltaTime <= 0f) return;
+            float alpha = Mathf.Clamp01((Time.time - Time.fixedTime) / Time.fixedDeltaTime);
+            for (int i = 0; i < tracks.Count; i++)
+            {
+                var k = tracks[i];
+                if (k.t == null || k.steps < 2) continue;
+                var now = k.t.position;
+                if (now != k.curr || k.prev == k.curr) continue;  // moved outside the steps, or not moving
+                if ((k.curr - k.prev).sqrMagnitude > 400f * 400f) continue;  // a jump, not motion
+                smoothUndo.Add(new KeyValuePair<Transform, Vector3>(k.t, now));
+                k.t.position = Vector3.Lerp(k.prev, k.curr, alpha);
+                Smoothed++;
+            }
+        }
+
+        void UndoSmooth()
+        {
+            for (int i = 0; i < smoothUndo.Count; i++) if (smoothUndo[i].Key != null) smoothUndo[i].Key.position = smoothUndo[i].Value;
+            smoothUndo.Clear();
+        }
+
+        // Lab: how evenly the fastest tracked thing moves from rendered frame to rendered frame.
+        int evenFrames;
+        Transform evenTarget;
+        readonly List<float> evenX = new List<float>();
+        internal void MeasureEven(int frames) { evenFrames = frames; evenTarget = null; evenX.Clear(); }
+
+        void SampleEven()
+        {
+            if (evenFrames <= 0) return;
+            if (evenTarget == null)
+            {
+                float best = 0f;
+                foreach (var k in tracks)
+                {
+                    if (k.t == null || k.steps < 2) continue;
+                    float d = Mathf.Abs(k.curr.x - k.prev.x);
+                    bool stepMoved = true;
+                    if (stepMoved && d > best && d < 400f) { best = d; evenTarget = k.t; }
+                }
+                if (evenTarget == null) return;
+                var tk = trackOf[evenTarget];
+                Plugin.Log.LogInfo(string.Format(System.Globalization.CultureInfo.InvariantCulture, "EVEN target {0} now {1:F2} curr {2:F2} prev {3:F2} steps {4} smoothed now {5}",
+                    evenTarget.name, evenTarget.position.x, tk.curr.x, tk.prev.x, tk.steps, smoothUndo.Any(u => u.Key == evenTarget)));
+            }
+            evenX.Add(evenTarget.position.x);
+            if (--evenFrames > 0) return;
+            var steps = new List<float>();
+            for (int i = 1; i < evenX.Count; i++) steps.Add(Mathf.Abs(evenX[i] - evenX[i - 1]));
+            float mean = steps.Count > 0 ? steps.Average() : 0f;
+            float sd = steps.Count > 0 ? Mathf.Sqrt(steps.Select(v => (v - mean) * (v - mean)).Average()) : 0f;
+            int zero = steps.Count(v => v < 0.01f);
+            Plugin.Log.LogInfo(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "EVEN smooth {0} target {1}: {2} frames, step mean {3:F2} sd {4:F2} (sd/mean {5:F2}), frames with no motion {6}, smoothed {7} of {8}",
+                Smooth, evenTarget != null ? evenTarget.name : "none", steps.Count, mean, sd, mean > 0 ? sd / mean : 0f, zero, Smoothed, SmoothCandidates));
+        }
+
         static Camera WorldCamera()
         {
             foreach (var c in Camera.allCameras) if (c.GetComponent<AbstractCupheadGameCamera>() != null) return c;
@@ -372,6 +494,12 @@ namespace CupheadVR
             bool compareNow = eyeCheckFrames == 1;
             if (eyeCheckFrames > 0) eyeCheckFrames--;
             var cams = Camera.allCameras.OrderBy(c => c.depth).ToArray();
+            // Lab check that every render puts the game back exactly where it was.
+            var before = new Vector3[depthLayers.Count];
+            for (int i = 0; i < depthLayers.Count; i++) before[i] = depthLayers[i].Key != null ? depthLayers[i].Key.position : Vector3.zero;
+            // Smooth first, so the depth shifts below start from the in-between places and undo back to them.
+            ApplySmooth();
+            SampleEven();
             var saved = new Vector3[depthLayers.Count];
             for (int i = 0; i < depthLayers.Count; i++) saved[i] = depthLayers[i].Key != null ? depthLayers[i].Key.position : Vector3.zero;
             Vector3 worldSaved = world != null ? world.transform.position : Vector3.zero;
@@ -399,6 +527,9 @@ namespace CupheadVR
             }
             for (int i = 0; i < depthLayers.Count; i++) if (depthLayers[i].Key != null) depthLayers[i].Key.position = saved[i];
             if (world != null) world.transform.position = worldSaved;
+            UndoSmooth();
+            for (int i = 0; i < depthLayers.Count; i++)
+                if (depthLayers[i].Key != null && (depthLayers[i].Key.position - before[i]).sqrMagnitude > 1e-6f) RestoreErrors++;
             renderedPairs++;
             if (wantShot) { wantShot = false; SaveEyes(); }
             if (compareNow) CompareEyes();
