@@ -9,21 +9,25 @@ using UnityEngine.SceneManagement;
 
 namespace CupheadVR
 {
-    // Build 2: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
-    // layers, and an in-headset menu (hold both sticks). VR starts by itself unless VR.AutoStart is off; if OpenXR cannot
-    // start, the game stays flat. Lab probes from build 1 stay available behind Lab.Commands.
-    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "0.0.3")]
+    // Build 4: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
+    // layers, smooth motion at any headset rate, and an in-headset menu (hold both sticks). VR starts by itself unless
+    // VR.AutoStart is off; if OpenXR cannot start, the game stays flat. Lab probes stay available behind Lab.Commands.
+    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "0.0.4")]
     public class Plugin : BaseUnityPlugin
     {
+        internal const string Version = "0.0.4 (build 4)";
         internal static BepInEx.Logging.ManualLogSource Log;
         internal static ConfigEntry<bool> BlockSaves;
+        internal static ConfigEntry<float> Grain, Fringe;
         internal static string OutDir;
         internal static bool RigActive { get { return instance != null && instance.rig.Active; } }
         static Plugin instance;
 
-        const float DefaultWidth = 1.85f, DefaultDistance = 1.0f, DefaultDepth = 1.0f, DefaultSky = 0.85f, DefaultSharpen = 0.3f;
+        const float DefaultWidth = 1.85f, DefaultDistance = 1.0f, DefaultDepth = 1.5f, DefaultSky = 0.9f, DefaultSharpen = 0.3f,
+            DefaultPop = 1.0f, DefaultPopOut = 0.2f;
         ConfigEntry<bool> labCommands, autoDump, autoStart, smooth;
-        ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution;
+        ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution, characterPop;
+        ConfigEntry<int> clickVolume;
         string commandFile;
         int nextCommandCheck;
         float dumpAt = -1f;
@@ -42,12 +46,16 @@ namespace CupheadVR
             autoStart = Config.Bind("VR", "AutoStart", true, "Start VR by itself once the game is running.");
             stageWidth = Config.Bind("VR", "StageWidth", DefaultWidth, "Width of the stage in metres.");
             stageDistance = Config.Bind("VR", "StageDistance", DefaultDistance, "Distance to the stage in metres.");
-            depth = Config.Bind("VR", "Depth", DefaultDepth, "Depth strength, 1 is natural.");
-            popOut = Config.Bind("VR", "PopOut", 0f, "0 keeps the play plane on the stage. Higher brings the scene toward you.");
-            skyDepth = Config.Bind("VR", "SkyDepth", DefaultSky, "How far back skies without their own parallax sit, 0 on the stage, 1 very far.");
+            depth = Config.Bind("VR", "LayerDepth", DefaultDepth, "How far apart the background layers spread. 1 is the game's own spacing; higher spreads them without passing the horizon.");
+            popOut = Config.Bind("VR", "PopOut", DefaultPopOut, "0 keeps the play plane on the stage. Higher brings the scene toward you.");
+            characterPop = Config.Bind("VR", "CharacterPop", DefaultPop, "Lifts characters, bullets and effects off the play plane by the game's own drawing layers. 0 is flat.");
+            skyDepth = Config.Bind("VR", "SkyDepth", DefaultSky, "How far back skies without their own parallax sit, 0 on the stage, 1 at the horizon.");
             smooth = Config.Bind("VR", "SmoothMotion", true, "Draw moving things between the game's 60 Hz steps, so motion is smooth at any headset rate. Game speed does not change.");
             sharpen = Config.Bind("VR", "Sharpen", DefaultSharpen, "Strength of the sharpening pass, 0 is off.");
             resolution = Config.Bind("VR", "ResolutionScale", 1.0f, "1 matches the headset's pixel density across the stage.");
+            Grain = Config.Bind("Picture", "FilmGrain", 1.0f, "Film grain and scratches, 1 is the game's own amount, 0 is off.");
+            Fringe = Config.Bind("Picture", "ColorFringe", 1.0f, "The game's colour fringing at the edges, 1 is the game's own amount, 0 is off.");
+            clickVolume = Config.Bind("Menu", "ClickVolume", 2, "Menu click sounds: 0 off, 1 low, 2 medium, 3 high.");
             commandFile = Path.Combine(Paths.GameRootPath, "vrlab_command.txt");
             OutDir = Path.Combine(Paths.GameRootPath, "vrlab_dumps");
             probes = gameObject.AddComponent<Probes>();
@@ -55,10 +63,10 @@ namespace CupheadVR
             rig.PluginDir = Path.GetDirectoryName(Info.Location);
             rig.ShotDir = Path.Combine(Paths.GameRootPath, "vrlab_shots");
             menu = gameObject.AddComponent<MenuUI>();
-            menu.RowText = MenuRowText;
-            menu.Adjust = MenuAdjust;
-            menu.Activate = MenuActivate;
+            menu.Version = "CUPHEAD VR " + Version;
+            menu.Volume = () => clickVolume.Value;
             menu.Closed = () => { rig.ApplyStage(); rig.UpdateResolution(); };
+            BuildMenu();
             rig.Menu = menu;
             PushSettings();
             SceneManager.sceneLoaded += (scene, mode) =>
@@ -67,7 +75,7 @@ namespace CupheadVR
                 if (autoDump.Value) dumpAt = Time.realtimeSinceStartup + 4f;
             };
             new Harmony("com.scubasteve2365.cupheadvr").PatchAll(typeof(Plugin).Assembly);
-            Log.LogInfo("CupheadVR 0.0.3 (build 3) loaded. Unity " + Application.unityVersion + ", pointer size " + IntPtr.Size);
+            Log.LogInfo("CupheadVR " + Version + " loaded. Unity " + Application.unityVersion + ", pointer size " + IntPtr.Size);
         }
 
         void Update()
@@ -89,58 +97,82 @@ namespace CupheadVR
             }
         }
 
-        string MenuRowText(int row)
+        // ---- menu ----
+
+        static string Pct(float v) { return Mathf.RoundToInt(v * 100f) + "%"; }
+        static string M(float v) { return v.ToString("F2", CultureInfo.InvariantCulture) + " m"; }
+
+        MenuUI.Row Value(string label, ConfigEntry<float> e, float step, float min, float max, Func<string> show, string help)
         {
-            switch (row)
+            return new MenuUI.Row
             {
-                case 0: return string.Format(CultureInfo.InvariantCulture, "Stage distance: {0:F2} m", stageDistance.Value);
-                case 1: return string.Format(CultureInfo.InvariantCulture, "Stage size: {0:F2} m wide", stageWidth.Value);
-                case 2: return string.Format(CultureInfo.InvariantCulture, "Depth: {0:F0}%", depth.Value * 100f);
-                case 3: return string.Format(CultureInfo.InvariantCulture, "Pop-out: {0:F0}%", popOut.Value * 100f);
-                case 4: return string.Format(CultureInfo.InvariantCulture, "Sky distance: {0:F0}%", skyDepth.Value * 100f);
-                case 5: return string.Format(CultureInfo.InvariantCulture, "Sharpen: {0:F0}%", sharpen.Value * 100f);
-                case 6: return string.Format(CultureInfo.InvariantCulture, "Resolution: {0:F0}%   ({1} pixels wide)", resolution.Value * 100f, rig.WantedWidth());
-                case 7: return "Smooth motion: " + (smooth.Value ? "On" : "Off");
-                case 8: return "Recenter";
-                case 9: return "Reset to defaults";
-                default: return "Close";
-            }
+                Label = label,
+                Value = show,
+                Change = dir => { e.Value = Mathf.Clamp((float)Math.Round(e.Value + dir * step, 3), min, max); PushSettings(); LogSettings(); },
+                Help = () => help,
+            };
         }
 
-        void MenuAdjust(int row, int dir)
+        void BuildMenu()
         {
-            if (row == 0) stageDistance.Value = Mathf.Clamp(stageDistance.Value + dir * 0.05f, 0.5f, 10f);
-            else if (row == 1) stageWidth.Value = Mathf.Clamp(stageWidth.Value + dir * 0.05f, 0.5f, 10f);
-            else if (row == 2) depth.Value = Mathf.Clamp(depth.Value + dir * 0.05f, 0f, 2f);
-            else if (row == 3) popOut.Value = Mathf.Clamp(popOut.Value + dir * 0.05f, 0f, 1f);
-            else if (row == 4) skyDepth.Value = Mathf.Clamp(skyDepth.Value + dir * 0.05f, 0f, 1f);
-            else if (row == 5) sharpen.Value = Mathf.Clamp(sharpen.Value + dir * 0.1f, 0f, 1f);
-            else if (row == 6) resolution.Value = Mathf.Clamp(resolution.Value + dir * 0.1f, 0.5f, 1.5f);
-            else if (row == 7) smooth.Value = !smooth.Value;
-            else return;
+            var stage = new MenuUI.Tab { Name = "Stage" };
+            stage.Rows.Add(new MenuUI.Row { Label = "Recenter", Press = () => { rig.Recenter(); Log.LogInfo("MENU recenter"); },
+                Help = () => "Press A to put the stage straight ahead of where you face now. SteamVR's own recenter does the same." });
+            stage.Rows.Add(Value("Stage distance", stageDistance, 0.05f, 0.5f, 10f, () => M(stageDistance.Value), "How far away the stage stands. The picture keeps its depth; only where it sits changes."));
+            stage.Rows.Add(Value("Stage size", stageWidth, 0.05f, 0.5f, 10f, () => M(stageWidth.Value) + " wide", "How wide the stage is. Bigger is like sitting closer to a cinema screen."));
+            stage.Rows.Add(new MenuUI.Row { Label = "Reset the stage", Press = () => { stageDistance.Value = DefaultDistance; stageWidth.Value = DefaultWidth; PushSettings(); rig.Recenter(); LogSettings(); },
+                Help = () => "Press A to put the stage back to 1.85 m wide at 1 m, straight ahead." });
+
+            var depthTab = new MenuUI.Tab { Name = "Depth" };
+            depthTab.Rows.Add(Value("Layer depth", depth, 0.1f, 0.5f, 3f, () => Pct(depth.Value), "How far apart the background layers spread. 100% is the game's own spacing. Higher pushes the middle layers further back, but never past the horizon."));
+            depthTab.Rows.Add(Value("Character pop", characterPop, 0.1f, 0f, 3f, () => Pct(characterPop.Value), "Lifts Cuphead, enemies, bullets and effects off the ground, using the game's own drawing order, so they stand out like cut-outs. 0% keeps them flat."));
+            depthTab.Rows.Add(Value("Pop-out", popOut, 0.05f, 0f, 1f, () => Pct(popOut.Value), "Brings the whole scene toward you, so the play area floats in front of the stage and the background sits on it."));
+            depthTab.Rows.Add(Value("Sky distance", skyDepth, 0.05f, 0f, 1f, () => Pct(skyDepth.Value), "How far back painted skies sit when the game gives them no layer of their own. 100% is the horizon."));
+
+            var picture = new MenuUI.Tab { Name = "Picture" };
+            picture.Rows.Add(Value("Film grain", Grain, 0.1f, 0f, 1.5f, () => Pct(Grain.Value), "The old film grain, dust and scratches. 100% is how the game looks. Lower is cleaner in the headset."));
+            picture.Rows.Add(Value("Colour fringe", Fringe, 0.1f, 0f, 1.5f, () => Pct(Fringe.Value), "The red and blue fringes the game adds around the picture's edges. 100% is how the game looks."));
+            picture.Rows.Add(Value("Sharpen", sharpen, 0.1f, 0f, 1f, () => Pct(sharpen.Value), "Crisper line art. Too high makes edges glow."));
+            picture.Rows.Add(Value("Resolution", resolution, 0.1f, 0.5f, 1.5f, () => Pct(resolution.Value) + "  (" + rig.WantedWidth() + " px)", "100% matches your headset's sharpness across the stage. The new size takes effect when the menu closes."));
+            picture.Rows.Add(new MenuUI.Row { Label = "Smooth motion", Value = () => smooth.Value ? "On" : "Off",
+                Change = dir => { smooth.Value = !smooth.Value; PushSettings(); LogSettings(); },
+                Help = () => smooth.Value ? "On: things move smoothly at your headset's refresh rate. The game itself still runs at its normal speed."
+                                          : "Off: things move in the game's own 60 steps a second, which can look juddery above 60 Hz." });
+
+            var options = new MenuUI.Tab { Name = "Options" };
+            options.Rows.Add(new MenuUI.Row { Label = "Click sounds", Value = () => new[] { "Off", "Low", "Medium", "High" }[Mathf.Clamp(clickVolume.Value, 0, 3)],
+                Change = dir => clickVolume.Value = Mathf.Clamp(clickVolume.Value + dir, 0, 3), Help = () => "How loud the menu clicks are." });
+            options.Rows.Add(new MenuUI.Row { Label = "Reset everything", Press = ResetAll, Help = () => "Press A to put every setting back to its default." });
+            options.Rows.Add(new MenuUI.Row { Label = "Close", Press = () => menu.Close(), Help = () => "Close the menu. B or holding both sticks also closes it." });
+            menu.Tabs.Add(stage);
+            menu.Tabs.Add(depthTab);
+            menu.Tabs.Add(picture);
+            menu.Tabs.Add(options);
+        }
+
+        void ResetAll()
+        {
+            stageDistance.Value = DefaultDistance;
+            stageWidth.Value = DefaultWidth;
+            depth.Value = DefaultDepth;
+            popOut.Value = DefaultPopOut;
+            characterPop.Value = DefaultPop;
+            skyDepth.Value = DefaultSky;
+            sharpen.Value = DefaultSharpen;
+            resolution.Value = 1f;
+            smooth.Value = true;
+            Grain.Value = 1f;
+            Fringe.Value = 1f;
+            clickVolume.Value = 2;
             PushSettings();
-            Log.LogInfo(string.Format(CultureInfo.InvariantCulture, "MENU stage {0:F2} m wide at {1:F2} m, depth {2:F2}, pop-out {3:F2}, sky {4:F2}, sharpen {5:F2}, resolution {6:F2}, smooth {7}",
-                stageWidth.Value, stageDistance.Value, depth.Value, popOut.Value, skyDepth.Value, sharpen.Value, resolution.Value, smooth.Value));
+            Log.LogInfo("MENU defaults");
         }
 
-        void MenuActivate(int row)
+        void LogSettings()
         {
-            if (row == 7) { smooth.Value = !smooth.Value; PushSettings(); Log.LogInfo("MENU smooth " + smooth.Value); }
-            else if (row == 8) { rig.Recenter(); Log.LogInfo("MENU recenter"); }
-            else if (row == 9)
-            {
-                stageDistance.Value = DefaultDistance;
-                stageWidth.Value = DefaultWidth;
-                depth.Value = DefaultDepth;
-                popOut.Value = 0f;
-                skyDepth.Value = DefaultSky;
-                sharpen.Value = DefaultSharpen;
-                resolution.Value = 1f;
-                smooth.Value = true;
-                PushSettings();
-                Log.LogInfo("MENU defaults");
-            }
-            else if (row == 10) menu.Close();
+            Log.LogInfo(string.Format(CultureInfo.InvariantCulture,
+                "MENU stage {0:F2} m wide at {1:F2} m, layer depth {2:F2}, character pop {3:F2}, pop-out {4:F2}, sky {5:F2}, grain {6:F2}, fringe {7:F2}, sharpen {8:F2}, resolution {9:F2}, smooth {10}",
+                stageWidth.Value, stageDistance.Value, depth.Value, characterPop.Value, popOut.Value, skyDepth.Value, Grain.Value, Fringe.Value, sharpen.Value, resolution.Value, smooth.Value));
         }
 
         void PushSettings()
@@ -150,11 +182,15 @@ namespace CupheadVR
             rig.Separation = depth.Value;
             rig.PopOut = popOut.Value;
             rig.SkyDepth = skyDepth.Value;
+            rig.CharacterPop = characterPop.Value;
             rig.Sharpen = sharpen.Value;
             rig.Sharpness = resolution.Value;
             rig.Smooth = smooth.Value;
             rig.ApplyStage();
+            menu.Refresh();
         }
+
+        // ---- lab ----
 
         void ReadCommands()
         {
@@ -199,16 +235,20 @@ namespace CupheadVR
                 case "xrdump": rig.Dump(Path.Combine(rig.ShotDir, arg.Length > 0 ? arg : "xrdump")); break;
                 case "stamp": rig.Stamp = arg == "1"; break;
                 case "depth": depth.Value = F(arg); PushSettings(); break;
+                case "pop": characterPop.Value = F(arg); PushSettings(); break;
                 case "popout": popOut.Value = F(arg); PushSettings(); break;
                 case "sky": skyDepth.Value = F(arg); PushSettings(); break;
+                case "grain": Grain.Value = F(arg); break;
+                case "fringe": Fringe.Value = F(arg); break;
                 case "sharpen": sharpen.Value = F(arg); PushSettings(); break;
                 case "stage": stageWidth.Value = F(a[0]); stageDistance.Value = F(a[1]); PushSettings(); rig.UpdateResolution(); break;
-                case "track": probes.Track(F(arg)); break;
+                case "recenter": rig.Recenter(); break;
+                case "menu": if (arg.Length == 0) { if (menu.IsOpen) menu.Close(); else menu.Open(); } else menu.LabKey(arg); break;
+                case "menushot": probes.SaveTexture(menu.Texture, "menu_" + (arg.Length > 0 ? arg : "shot")); break;
                 case "match": rig.MatchRefresh = arg == "1"; break;
                 case "smooth": smooth.Value = arg == "1"; PushSettings(); break;
                 case "even": rig.MeasureEven(int.Parse(arg, CultureInfo.InvariantCulture)); break;
-                case "recenter": rig.Recenter(); break;
-                case "menu": if (arg.Length == 0) { if (menu.IsOpen) menu.Close(); else menu.Open(); } else menu.LabKey(arg); break;
+                case "track": probes.Track(F(arg)); break;
                 default: Log.LogWarning("unknown command " + line); break;
             }
         }
@@ -224,6 +264,28 @@ namespace CupheadVR
             Plugin.Log.LogInfo("SAVE blocked (Lab.BlockSaves)");
             if (handler != null) handler(true);
             return false;
+        }
+    }
+
+    // Film grain and colour fringe: the game's full-screen pass (ChromaticAberrationFilmGrain.OnRenderImage) reads its
+    // own intensity field and the chromatic aberration setting. Both are scaled for the pass and put back after it,
+    // so the game's saved settings never change.
+    [HarmonyPatch(typeof(ChromaticAberrationFilmGrain), "OnRenderImage")]
+    static class GrainPatch
+    {
+        static void Prefix(ChromaticAberrationFilmGrain __instance, out float[] __state)
+        {
+            var data = SettingsData.Data;
+            __state = new[] { __instance.intensity, data != null ? data.chromaticAberration : 0f };
+            __instance.intensity = __state[0] * Plugin.Grain.Value;
+            if (data != null) data.chromaticAberration = __state[1] * Plugin.Fringe.Value;
+        }
+
+        static void Postfix(ChromaticAberrationFilmGrain __instance, float[] __state)
+        {
+            __instance.intensity = __state[0];
+            var data = SettingsData.Data;
+            if (data != null) data.chromaticAberration = __state[1];
         }
     }
 }

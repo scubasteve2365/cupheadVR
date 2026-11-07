@@ -281,6 +281,20 @@ namespace CupheadVR
                 span, frames, frames / span, Time.fixedDeltaTime, end.x - start.x, (end.x - start.x) / span, maxY - start.y));
         }
 
+        internal void SaveTexture(RenderTexture rt, string name)
+        {
+            if (rt == null) { Plugin.Log.LogWarning("no texture to save"); return; }
+            var old = RenderTexture.active;
+            RenderTexture.active = rt;
+            var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
+            tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+            tex.Apply();
+            RenderTexture.active = old;
+            File.WriteAllBytes(Path2(name + ".png"), tex.EncodeToPNG());
+            Destroy(tex);
+            Plugin.Log.LogInfo("TEXSHOT " + name);
+        }
+
         internal void EnterSlot(int slot)
         {
             PlayerData.CurrentSaveFileIndex = slot;

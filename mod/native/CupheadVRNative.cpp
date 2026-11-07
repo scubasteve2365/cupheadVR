@@ -44,7 +44,8 @@ struct FrameInfo {
 
 // The eye textures travel with each frame, each holding a reference: Unity can recreate its textures at any time,
 // for example when the game changes resolution, so a pointer saved earlier can go stale.
-struct PendingFrame { XrTime displayTime; XrDuration period; bool shouldRender; ID3D11Texture2D* src[2]; bool viewsValid; XrView views[2]; };
+struct PendingFrame { XrTime displayTime; XrDuration period; bool shouldRender; ID3D11Texture2D* src[2]; bool viewsValid; XrView views[2];
+                      ID3D11Texture2D* menu; float menuPose[7]; };  // menu: its own quad, null when closed
 
 static std::mutex g_logLock;
 static std::deque<std::string> g_log;
@@ -94,6 +95,11 @@ static unsigned long long g_submitted, g_submittedLayers, g_skippedAcquire;
 
 struct Swap { XrSwapchain handle; std::vector<XrSwapchainImageD3D11KHR> images; };
 static Swap g_swap[2];
+static Swap g_menuSwap;                      // the mod menu's own quad layer, both eyes, on top of everything
+static int g_menuW, g_menuH;
+static std::mutex g_menuLock;
+static ID3D11Texture2D* g_menuTex;           // set by the plugin while the menu is open, else null
+static float g_menuPose[7];                  // centre x, y, z, width, height, turn y, w
 static Swap g_black;                         // 16x16 black image, shown to both eyes as a projection layer behind the stage
 static volatile LONG g_recenterPending = 0;  // the runtime recentred (reference space change event)
 
@@ -547,6 +553,7 @@ static void DoInit() {
 
 static void ReleaseFrame(PendingFrame& f) {
     for (auto& t : f.src) { if (t) t->Release(); t = nullptr; }
+    if (f.menu) { f.menu->Release(); f.menu = nullptr; }
 }
 
 static bool CopyEye(int e, ID3D11Texture2D* src, XrCompositionLayerQuad& quad) {
@@ -581,6 +588,49 @@ static bool CopyEye(int e, ID3D11Texture2D* src, XrCompositionLayerQuad& quad) {
     return true;
 }
 
+static bool CopyMenu(ID3D11Texture2D* src, const float* pose, XrCompositionLayerQuad& quad) {
+    D3D11_TEXTURE2D_DESC td;
+    src->GetDesc(&td);
+    if (!g_menuSwap.handle || g_menuW != (int)td.Width || g_menuH != (int)td.Height) {
+        if (g_menuSwap.handle) { p_destroySwap(g_menuSwap.handle); g_menuSwap.handle = XR_NULL_HANDLE; }
+        XrSwapchainCreateInfo c{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        c.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+        c.format = g_format;
+        c.sampleCount = 1;
+        c.width = td.Width;
+        c.height = td.Height;
+        c.faceCount = c.arraySize = c.mipCount = 1;
+        uint32_t ic = 0;
+        if (XR_FAILED(p_createSwap(g_sess, &c, &g_menuSwap.handle)) || XR_FAILED(p_enumImages(g_menuSwap.handle, 0, &ic, nullptr))) {
+            Log("menu layer: no swapchain");
+            g_menuSwap.handle = XR_NULL_HANDLE;
+            return false;
+        }
+        g_menuSwap.images.assign(ic, XrSwapchainImageD3D11KHR{XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
+        p_enumImages(g_menuSwap.handle, ic, &ic, (XrSwapchainImageBaseHeader*)g_menuSwap.images.data());
+        g_menuW = td.Width;
+        g_menuH = td.Height;
+        Log("menu layer %dx%d", g_menuW, g_menuH);
+    }
+    uint32_t idx = 0;
+    if (XR_FAILED(p_acquire(g_menuSwap.handle, nullptr, &idx))) return false;
+    XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    wi.timeout = 100000000;
+    if (XR_FAILED(p_waitImage(g_menuSwap.handle, &wi))) return false;
+    g_ctx->CopySubresourceRegion(g_menuSwap.images[idx].texture, 0, 0, 0, 0, src, 0, nullptr);
+    p_release(g_menuSwap.handle, nullptr);
+    quad = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    quad.space = g_space;
+    quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    quad.subImage.swapchain = g_menuSwap.handle;
+    quad.subImage.imageRect.extent = {g_menuW, g_menuH};
+    quad.pose.position = {pose[0], pose[1], pose[2]};
+    quad.pose.orientation.y = pose[5];
+    quad.pose.orientation.w = pose[6];
+    quad.size = {pose[3], pose[4]};
+    return true;
+}
+
 static void DoSubmit() {
     PendingFrame f;
     {
@@ -594,7 +644,8 @@ static void DoSubmit() {
     XrCompositionLayerQuad quads[2];
     XrCompositionLayerProjection backdrop{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     XrCompositionLayerProjectionView bviews[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
-    const XrCompositionLayerBaseHeader* layers[3];
+    const XrCompositionLayerBaseHeader* layers[4];
+    XrCompositionLayerQuad menuQuad;
     uint32_t count = 0;
     if (f.shouldRender) {
         bool haveBackdrop = false;
@@ -621,6 +672,7 @@ static void DoSubmit() {
             if (haveBackdrop) layers[count++] = (XrCompositionLayerBaseHeader*)&backdrop;
             layers[count++] = (XrCompositionLayerBaseHeader*)&quads[0];
             layers[count++] = (XrCompositionLayerBaseHeader*)&quads[1];
+            if (f.menu && CopyMenu(f.menu, f.menuPose, menuQuad)) layers[count++] = (XrCompositionLayerBaseHeader*)&menuQuad;
         } else {
             g_skippedAcquire++;
         }
@@ -645,6 +697,8 @@ static void DoShutdown() {
     }
     for (auto& sw : g_swap) sw.handle = XR_NULL_HANDLE;
     g_black.handle = XR_NULL_HANDLE;
+    g_menuSwap.handle = XR_NULL_HANDLE;
+    g_menuW = g_menuH = 0;
     g_inst = XR_NULL_HANDLE;
     g_sess = XR_NULL_HANDLE;
     g_space = XR_NULL_HANDLE;
@@ -672,6 +726,14 @@ API void CupXR_SetStage(float cx, float cy, float cz, float width, float height,
 // Takes effect with the next resize event on the render thread.
 API void CupXR_SetSize(int width, int height) { g_newW = width; g_newH = height; }
 API void CupXR_SetSharpen(float amount) { g_sharpen = amount; }
+
+// The menu texture and where its quad sits in the room. A null texture hides the menu. Main thread, before BeginFrame.
+API void CupXR_SetMenu(void* tex, float cx, float cy, float cz, float width, float height, float qy, float qw) {
+    std::lock_guard<std::mutex> l(g_menuLock);
+    g_menuTex = (ID3D11Texture2D*)tex;
+    float p[7] = {cx, cy, cz, width, height, qy, qw};
+    memcpy(g_menuPose, p, sizeof(p));
+}
 API void CupXR_DumpNext(const char* basePath) { strcpy_s(g_dumpPath, basePath); g_dumpWanted = 1; }
 API int CupXR_RecommendedWidth() { return g_recW; }
 
@@ -724,8 +786,12 @@ API int CupXR_BeginFrame(FrameInfo* out, void* left, void* right) {
     out->periodMs = (float)(fs.predictedDisplayPeriod / 1e6);
     {
         std::lock_guard<std::mutex> l(g_frameLock);
-        PendingFrame f{fs.predictedDisplayTime, fs.predictedDisplayPeriod, fs.shouldRender != 0, {(ID3D11Texture2D*)left, (ID3D11Texture2D*)right}, false, {}};
+        PendingFrame f{fs.predictedDisplayTime, fs.predictedDisplayPeriod, fs.shouldRender != 0, {(ID3D11Texture2D*)left, (ID3D11Texture2D*)right}, false, {}, nullptr, {}};
         for (auto t : f.src) if (t) t->AddRef();
+        {
+            std::lock_guard<std::mutex> ml(g_menuLock);
+            if (g_menuTex) { f.menu = g_menuTex; f.menu->AddRef(); memcpy(f.menuPose, g_menuPose, sizeof(g_menuPose)); }
+        }
         g_frames.push_back(f);
     }
     if (fs.shouldRender) {

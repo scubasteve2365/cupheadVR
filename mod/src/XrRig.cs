@@ -48,6 +48,7 @@ namespace CupheadVR
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void StartFn(IntPtr left, IntPtr right, int width, int height);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int BeginFrameFn(out FrameInfo info, IntPtr left, IntPtr right);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int PopLogFn(StringBuilder buffer, int size);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SetMenuFn(IntPtr tex, float cx, float cy, float cz, float width, float height, float qy, float qw);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void StatsFn(out uint frames, out uint layers, out uint skipped);
 
         GetRenderEventFn xGetRenderEvent;
@@ -61,6 +62,7 @@ namespace CupheadVR
         BeginFrameFn xBeginFrame;
         PopLogFn xPopLog;
         StatsFn xStats;
+        SetMenuFn xSetMenu;
 
         static T Fn<T>(IntPtr module, string name) where T : class
         {
@@ -73,7 +75,8 @@ namespace CupheadVR
         internal float StageWidth = 1.85f, StageDistance = 1.0f, Separation = 1.0f;
         internal float Sharpness = 1.0f;  // resolution scale: 1 matches the headset's pixel density across the stage
         internal float PopOut;            // 0 keeps the play plane on the stage; higher brings everything toward you
-        internal float SkyDepth = 0.85f;  // depth given to skies and scrolling clouds that have no parallax speed of their own
+        internal float SkyDepth = 0.85f;
+        internal float CharacterPop = 1.0f;  // play-plane layering by the game's sorting layers, 1 = default spread  // depth given to skies and scrolling clouds that have no parallax speed of their own
         internal float Sharpen = 0.3f;
         internal int EyeWidth = 2560, EyeHeight = 1440;
         internal bool FlipY = true, Stamp;
@@ -121,6 +124,7 @@ namespace CupheadVR
             xBeginFrame = Fn<BeginFrameFn>(module, "CupXR_BeginFrame");
             xPopLog = Fn<PopLogFn>(module, "CupXR_PopLog");
             xStats = Fn<StatsFn>(module, "CupXR_Stats");
+            xSetMenu = Fn<SetMenuFn>(module, "CupXR_SetMenu");
             renderEvent = xGetRenderEvent();
             nativeLoaded = true;
             return true;
@@ -213,6 +217,35 @@ namespace CupheadVR
             Plugin.Log.LogInfo(string.Format("REFRESH fixed step {0:F5} s ({1:F2} Hz)", want, 1f / want));
         }
 
+        FrameInfo lastInfo;
+        bool menuWasOpen;
+        Vector3 menuPos;
+        Quaternion menuTurn = Quaternion.identity;
+        internal float MenuDistance = 0.75f, MenuWidth = 0.8f;
+
+        // The menu is its own quad layer, fixed in the room where it opened: in front of the head, a little low.
+        void PushMenu()
+        {
+            bool open = Menu != null && Menu.IsOpen && Menu.Texture != null;
+            if (open && !menuWasOpen)
+            {
+                var a = new Vector3(lastInfo.eye0.px, lastInfo.eye0.py, lastInfo.eye0.pz);
+                var b = new Vector3(lastInfo.eye1.px, lastInfo.eye1.py, lastInfo.eye1.pz);
+                var head = (a + b) * 0.5f;
+                var fwd = new Quaternion(lastInfo.eye0.qx, lastInfo.eye0.qy, lastInfo.eye0.qz, lastInfo.eye0.qw) * new Vector3(0f, 0f, -1f);
+                if (lastInfo.eye0.qw == 0f && lastInfo.eye0.qy == 0f) fwd = new Vector3(0f, 0f, -1f);
+                menuTurn = Quaternion.Euler(0f, Mathf.Atan2(-fwd.x, -fwd.z) * Mathf.Rad2Deg, 0f);
+                float dist = Mathf.Min(MenuDistance, StageDistance - 0.15f);
+                menuPos = head + menuTurn * new Vector3(0f, -0.08f, -Mathf.Max(0.45f, dist));
+                Plugin.Log.LogInfo(string.Format("MENU placed at ({0:F2},{1:F2},{2:F2}), {3:F2} m wide", menuPos.x, menuPos.y, menuPos.z, MenuWidth));
+            }
+            menuWasOpen = open;
+            if (!open) { xSetMenu(IntPtr.Zero, 0, 0, 0, 0, 0, 0, 1); return; }
+            var tex = Menu.Texture;
+            float h = MenuWidth * tex.height / tex.width;
+            xSetMenu(tex.GetNativeTexturePtr(), menuPos.x, menuPos.y, menuPos.z, MenuWidth, h, menuTurn.y, menuTurn.w);
+        }
+
         void TakeView(FrameInfo info)
         {
             var a = new Vector3(info.eye0.px, info.eye0.py, info.eye0.pz);
@@ -274,6 +307,7 @@ namespace CupheadVR
                     if (!eyeRender[i].IsCreated()) eyeRender[i].Create();
                     if (!eyeOut[i].IsCreated()) eyeOut[i].Create();
                 }
+                PushMenu();
                 FrameInfo info;
                 if (xBeginFrame(out info, eyeOut[0].GetNativeTexturePtr(), eyeOut[1].GetNativeTexturePtr()) == 0) continue;
                 if (xTakeRecenter() != 0) wantRecenter = true;
@@ -284,6 +318,7 @@ namespace CupheadVR
                     TakeView(info);
                     UpdateResolution();
                 }
+                if (info.viewsValid != 0) lastInfo = info;
                 if (info.shouldRender != 0) RenderEyes(info);
                 GL.IssuePluginEvent(renderEvent, EventSubmit);
 
@@ -303,8 +338,16 @@ namespace CupheadVR
 
         // The layers that get a depth, refreshed a few times a second because levels spawn and remove scenery.
         readonly List<KeyValuePair<Transform, float>> depthLayers = new List<KeyValuePair<Transform, float>>();
+        // Play-plane things that get a small depth from the game's sorting layer (Character pop), by sorting layer name.
+        static readonly Dictionary<string, float> PopBySortingLayer = new Dictionary<string, float>
+        {
+            { "Background", 0.05f }, { "Enemies", -0.05f }, { "Player", -0.06f }, { "Projectiles", -0.08f },
+            { "Effects", -0.08f }, { "Foreground", -0.12f }, { "ForegroundEffects", -0.15f },
+        };
+        const float PopMarker = 1000f;  // values at or above this are a Character pop value + PopMarker
         int layersFrame = -1000;
-        int skyCount;
+        int skyCount, popCount;
+        readonly HashSet<Transform> popTaken = new HashSet<Transform>();
 
         void CollectLayers()
         {
@@ -329,6 +372,7 @@ namespace CupheadVR
             }
             foreach (var p in FindObjectsOfType<MapParallaxLayer>())
                 if (taken.Add(p.transform)) depthLayers.Add(new KeyValuePair<Transform, float>(p.transform, p.percentage));
+            int parallaxCount = depthLayers.Count;
             // Backdrops with no parallax at all, drawn behind everything else (Root Pack sky, sorting order -1000).
             foreach (var r in FindObjectsOfType<SpriteRenderer>())
             {
@@ -338,6 +382,38 @@ namespace CupheadVR
                 skyCount++;
                 depthLayers.Add(new KeyValuePair<Transform, float>(r.transform, float.NaN));
             }
+            // Character pop: sprites on the play plane, by sorting layer. Particles keep their world positions, so they stay.
+            popCount = 0;
+            foreach (var r in FindObjectsOfType<Renderer>())
+            {
+                if (r is ParticleSystemRenderer || !r.enabled) continue;
+                float pop;
+                if (!PopBySortingLayer.TryGetValue(r.sortingLayerName, out pop)) continue;
+                if (HasTaken(r.transform, taken)) continue;
+                if (!popTaken.Add(r.transform)) continue;
+                depthLayers.Add(new KeyValuePair<Transform, float>(r.transform, PopMarker + pop));
+                popCount++;
+            }
+            popTaken.Clear();
+            // Parents before children, so each child lands exactly at its own target and is put back exactly.
+            var depthOf = new Dictionary<Transform, int>();
+            foreach (var kv in depthLayers)
+            {
+                int d = 0;
+                for (var c = kv.Key.parent; c != null; c = c.parent) d++;
+                depthOf[kv.Key] = d;
+            }
+            depthLayers.Sort((x, y) => depthOf[x.Key].CompareTo(depthOf[y.Key]));
+        }
+
+        // Depth above 100% spreads the layers apart without ever passing infinity: a background layer with speed s sits at
+        // 1 - (1 - s)^Depth, foreground layers scale with Depth. Skies use Sky distance. Character pop is its own control.
+        float EffectiveSpeed(float v)
+        {
+            if (float.IsNaN(v)) return SkyDepth;
+            if (v >= PopMarker * 0.5f) return (v - PopMarker) * CharacterPop;
+            if (v > 0f) return 1f - Mathf.Pow(1f - Mathf.Min(v, 1f), Separation);
+            return v * Separation;
         }
 
         static bool HasTaken(Transform t, HashSet<Transform> taken)
@@ -349,7 +425,7 @@ namespace CupheadVR
         internal string LayerSummary()
         {
             CollectLayers();
-            return depthLayers.Count + " layers, " + skyCount + " sky";
+            return depthLayers.Count + " shifted, " + skyCount + " sky, " + popCount + " pop";
         }
 
         // Smooth motion. Cuphead moves players, enemies and bullets in FixedUpdate, 60 steps a second, and about 40 of
@@ -511,18 +587,17 @@ namespace CupheadVR
                 var local = checking ? Vector3.zero : info.viewsValid != 0
                     ? Quaternion.Inverse(viewTurn) * (new Vector3(e.px, e.py, e.pz) - viewPoint)
                     : new Vector3(eye == 0 ? -0.0315f : 0.0315f, 0f, 0f);
-                var shift = new Vector2(local.x, local.y) * unitsPerMetre * Separation;
+                var shift = new Vector2(local.x, local.y) * unitsPerMetre;
                 for (int i = 0; i < depthLayers.Count; i++)
                 {
                     var t = depthLayers[i].Key;
                     if (t == null) continue;
-                    float s = float.IsNaN(depthLayers[i].Value) ? SkyDepth : depthLayers[i].Value;
+                    float s = EffectiveSpeed(depthLayers[i].Value);
                     t.position = saved[i] + new Vector3(shift.x * s, shift.y * s, 0f);
                 }
                 // Pop-out moves the zero-depth plane back: the whole world shifts toward you, the HUD stays.
                 if (world != null) world.transform.position = worldSaved + new Vector3(shift.x * PopOut, shift.y * PopOut, 0f);
                 RenderStack(cams, eyeRender[eye]);
-                if (Menu != null && Menu.IsOpen) DrawMenu(eyeRender[eye], shift / viewWidth);
                 Finish(eye);
             }
             for (int i = 0; i < depthLayers.Count; i++) if (depthLayers[i].Key != null) depthLayers[i].Key.position = saved[i];
@@ -548,32 +623,6 @@ namespace CupheadVR
                 cam.Render();
                 cam.targetTexture = prev;
             }
-            RenderTexture.active = old;
-        }
-
-        // The menu floats in front of the stage: it shifts against the eye like a layer with speed MenuDepth.
-        const float MenuDepth = -0.2f, MenuWidth = 0.62f;
-
-        void DrawMenu(RenderTexture target, Vector2 shiftOfView)
-        {
-            var tex = Menu.Texture;
-            if (tex == null) return;
-            float w = MenuWidth, h = MenuWidth * tex.height / tex.width * 16f / 9f;
-            float cx = 0.5f + shiftOfView.x * MenuDepth, cy = 0.5f + shiftOfView.y * MenuDepth * 16f / 9f;
-            var old = RenderTexture.active;
-            RenderTexture.active = target;
-            GL.PushMatrix();
-            GL.LoadOrtho();
-            blendMat.mainTexture = tex;
-            blendMat.SetPass(0);
-            GL.Begin(GL.QUADS);
-            GL.Color(Color.white);
-            GL.TexCoord2(0f, 0f); GL.Vertex3(cx - w / 2, cy - h / 2, 0f);
-            GL.TexCoord2(0f, 1f); GL.Vertex3(cx - w / 2, cy + h / 2, 0f);
-            GL.TexCoord2(1f, 1f); GL.Vertex3(cx + w / 2, cy + h / 2, 0f);
-            GL.TexCoord2(1f, 0f); GL.Vertex3(cx + w / 2, cy - h / 2, 0f);
-            GL.End();
-            GL.PopMatrix();
             RenderTexture.active = old;
         }
 
