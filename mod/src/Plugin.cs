@@ -12,10 +12,10 @@ namespace CupheadVR
     // Build 4: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
     // layers, smooth motion at any headset rate, and an in-headset menu (hold both sticks). VR starts by itself unless
     // VR.AutoStart is off; if OpenXR cannot start, the game stays flat. Lab probes stay available behind Lab.Commands.
-    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "0.0.4")]
+    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "0.0.5")]
     public class Plugin : BaseUnityPlugin
     {
-        internal const string Version = "0.0.4 (build 4)";
+        internal const string Version = "0.0.5 (build 5)";
         internal static BepInEx.Logging.ManualLogSource Log;
         internal static ConfigEntry<bool> BlockSaves;
         internal static ConfigEntry<float> Grain, Fringe;
@@ -25,7 +25,7 @@ namespace CupheadVR
 
         const float DefaultWidth = 1.85f, DefaultDistance = 1.0f, DefaultDepth = 1.5f, DefaultSky = 0.9f, DefaultSharpen = 0.3f,
             DefaultPop = 1.0f, DefaultPopOut = 0.2f;
-        ConfigEntry<bool> labCommands, autoDump, autoStart, smooth;
+        ConfigEntry<bool> labCommands, autoDump, autoStart, smooth, edgeMatch;
         ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution, characterPop;
         ConfigEntry<int> clickVolume;
         string commandFile;
@@ -51,6 +51,7 @@ namespace CupheadVR
             characterPop = Config.Bind("VR", "CharacterPop", DefaultPop, "Lifts characters, bullets and effects off the play plane by the game's own drawing layers. 0 is flat.");
             skyDepth = Config.Bind("VR", "SkyDepth", DefaultSky, "How far back skies without their own parallax sit, 0 on the stage, 1 at the horizon.");
             smooth = Config.Bind("VR", "SmoothMotion", true, "Draw moving things between the game's 60 Hz steps, so motion is smooth at any headset rate. Game speed does not change.");
+            edgeMatch = Config.Bind("VR", "EdgeMatch", true, "Trim each eye's outer edge so both eyes see the same picture at the stage edges.");
             sharpen = Config.Bind("VR", "Sharpen", DefaultSharpen, "Strength of the sharpening pass, 0 is off.");
             resolution = Config.Bind("VR", "ResolutionScale", 1.0f, "1 matches the headset's pixel density across the stage.");
             Grain = Config.Bind("Picture", "FilmGrain", 1.0f, "Film grain and scratches, 1 is the game's own amount, 0 is off.");
@@ -127,6 +128,10 @@ namespace CupheadVR
             depthTab.Rows.Add(Value("Layer depth", depth, 0.1f, 0.5f, 3f, () => Pct(depth.Value), "How far apart the background layers spread. 100% is the game's own spacing. Higher pushes the middle layers further back, but never past the horizon."));
             depthTab.Rows.Add(Value("Character pop", characterPop, 0.1f, 0f, 3f, () => Pct(characterPop.Value), "Lifts Cuphead, enemies, bullets and effects off the ground, using the game's own drawing order, so they stand out like cut-outs. 0% keeps them flat."));
             depthTab.Rows.Add(Value("Pop-out", popOut, 0.05f, 0f, 1f, () => Pct(popOut.Value), "Brings the whole scene toward you, so the play area floats in front of the stage and the background sits on it."));
+            depthTab.Rows.Add(new MenuUI.Row { Label = "Edge match", Value = () => edgeMatch.Value ? "On" : "Off",
+                Change = dir => { edgeMatch.Value = !edgeMatch.Value; PushSettings(); LogSettings(); },
+                Help = () => edgeMatch.Value ? "On: each eye's outer edge is trimmed, so both eyes see the same picture at the stage edges. The stage frame then floats at the depth of the nearest layer."
+                                             : "Off: at the stage edges each eye sees a strip of picture the other does not, which can look odd with a lot of pop-out." });
             depthTab.Rows.Add(Value("Sky distance", skyDepth, 0.05f, 0f, 1f, () => Pct(skyDepth.Value), "How far back painted skies sit when the game gives them no layer of their own. 100% is the horizon."));
 
             var picture = new MenuUI.Tab { Name = "Picture" };
@@ -161,6 +166,7 @@ namespace CupheadVR
             sharpen.Value = DefaultSharpen;
             resolution.Value = 1f;
             smooth.Value = true;
+            edgeMatch.Value = true;
             Grain.Value = 1f;
             Fringe.Value = 1f;
             clickVolume.Value = 2;
@@ -171,8 +177,8 @@ namespace CupheadVR
         void LogSettings()
         {
             Log.LogInfo(string.Format(CultureInfo.InvariantCulture,
-                "MENU stage {0:F2} m wide at {1:F2} m, layer depth {2:F2}, character pop {3:F2}, pop-out {4:F2}, sky {5:F2}, grain {6:F2}, fringe {7:F2}, sharpen {8:F2}, resolution {9:F2}, smooth {10}",
-                stageWidth.Value, stageDistance.Value, depth.Value, characterPop.Value, popOut.Value, skyDepth.Value, Grain.Value, Fringe.Value, sharpen.Value, resolution.Value, smooth.Value));
+                "MENU stage {0:F2} m wide at {1:F2} m, layer depth {2:F2}, character pop {3:F2}, pop-out {4:F2}, sky {5:F2}, grain {6:F2}, fringe {7:F2}, sharpen {8:F2}, resolution {9:F2}, smooth {10}, edge match {11}",
+                stageWidth.Value, stageDistance.Value, depth.Value, characterPop.Value, popOut.Value, skyDepth.Value, Grain.Value, Fringe.Value, sharpen.Value, resolution.Value, smooth.Value, edgeMatch.Value));
         }
 
         void PushSettings()
@@ -186,6 +192,7 @@ namespace CupheadVR
             rig.Sharpen = sharpen.Value;
             rig.Sharpness = resolution.Value;
             rig.Smooth = smooth.Value;
+            rig.EdgeTrim = edgeMatch.Value;
             rig.ApplyStage();
             menu.Refresh();
         }
@@ -246,6 +253,7 @@ namespace CupheadVR
                 case "menu": if (arg.Length == 0) { if (menu.IsOpen) menu.Close(); else menu.Open(); } else menu.LabKey(arg); break;
                 case "menushot": probes.SaveTexture(menu.Texture, "menu_" + (arg.Length > 0 ? arg : "shot")); break;
                 case "match": rig.MatchRefresh = arg == "1"; break;
+                case "edge": edgeMatch.Value = arg == "1"; PushSettings(); break;
                 case "smooth": smooth.Value = arg == "1"; PushSettings(); break;
                 case "even": rig.MeasureEven(int.Parse(arg, CultureInfo.InvariantCulture)); break;
                 case "track": probes.Track(F(arg)); break;

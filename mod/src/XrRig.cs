@@ -579,6 +579,15 @@ namespace CupheadVR
             var saved = new Vector3[depthLayers.Count];
             for (int i = 0; i < depthLayers.Count; i++) saved[i] = depthLayers[i].Key != null ? depthLayers[i].Key.position : Vector3.zero;
             Vector3 worldSaved = world != null ? world.transform.position : Vector3.zero;
+            // Floating window: the nearest thing on the stage, as a speed relative to the stage frame (pop-out included).
+            // A layer with relative speed f moves by shift * f in an eye's image, so near the edges each eye would show
+            // a strip of picture the other eye does not have. Each eye's outer edge is trimmed by that much, so both
+            // eyes see the same picture at the edges and the frame itself sits at the depth of the nearest layer.
+            float nearest = -PopOut;
+            if (EdgeTrim)
+                for (int i = 0; i < depthLayers.Count; i++)
+                    if (depthLayers[i].Key != null) nearest = Mathf.Min(nearest, EffectiveSpeed(depthLayers[i].Value) - PopOut);
+            if (!EdgeTrim) nearest = 0f;
 
             for (int eye = 0; eye < 2; eye++)
             {
@@ -598,6 +607,7 @@ namespace CupheadVR
                 // Pop-out moves the zero-depth plane back: the whole world shifts toward you, the HUD stays.
                 if (world != null) world.transform.position = worldSaved + new Vector3(shift.x * PopOut, shift.y * PopOut, 0f);
                 RenderStack(cams, eyeRender[eye]);
+                TrimEdges(eyeRender[eye], shift * nearest / viewWidth, eye);
                 Finish(eye);
             }
             for (int i = 0; i < depthLayers.Count; i++) if (depthLayers[i].Key != null) depthLayers[i].Key.position = saved[i];
@@ -608,6 +618,39 @@ namespace CupheadVR
             renderedPairs++;
             if (wantShot) { wantShot = false; SaveEyes(); }
             if (compareNow) CompareEyes();
+        }
+
+        internal bool EdgeTrim = true;
+        internal readonly float[] TrimShare = new float[4];  // last trims as a share of the width or height: left eye x, y, right eye x, y
+
+        // d is how far the nearest layer moves in this eye, as a share of the view (x of the width, y of the height
+        // after aspect). Moving right (d.x > 0) shows extra picture at the left edge, so the left edge is covered.
+        void TrimEdges(RenderTexture target, Vector2 d, int eye)
+        {
+            float dx = d.x, dy = d.y * 16f / 9f;
+            TrimShare[eye * 2] = dx;
+            TrimShare[eye * 2 + 1] = dy;
+            if (Mathf.Abs(dx) < 1e-5f && Mathf.Abs(dy) < 1e-5f) return;
+            var old = RenderTexture.active;
+            RenderTexture.active = target;
+            GL.PushMatrix();
+            GL.LoadOrtho();
+            copyMat.mainTexture = Texture2D.blackTexture;
+            copyMat.SetPass(0);
+            GL.Begin(GL.QUADS);
+            if (dx > 0f) Quad(0f, 0f, dx, 1f); else if (dx < 0f) Quad(1f + dx, 0f, 1f, 1f);
+            if (dy > 0f) Quad(0f, 0f, 1f, dy); else if (dy < 0f) Quad(0f, 1f + dy, 1f, 1f);
+            GL.End();
+            GL.PopMatrix();
+            RenderTexture.active = old;
+        }
+
+        static void Quad(float x0, float y0, float x1, float y1)
+        {
+            GL.TexCoord2(0f, 0f); GL.Vertex3(x0, y0, 0f);
+            GL.TexCoord2(0f, 1f); GL.Vertex3(x0, y1, 0f);
+            GL.TexCoord2(1f, 1f); GL.Vertex3(x1, y1, 0f);
+            GL.TexCoord2(1f, 0f); GL.Vertex3(x1, y0, 0f);
         }
 
         static void RenderStack(Camera[] cams, RenderTexture target)
@@ -700,6 +743,7 @@ namespace CupheadVR
             var name = scene + "_f" + Time.frameCount;
             ReadEye(0, name + "_L.png");
             ReadEye(1, name + "_R.png");
+            Plugin.Log.LogInfo(string.Format(System.Globalization.CultureInfo.InvariantCulture, "TRIM left eye x {0:F4} y {1:F4}, right eye x {2:F4} y {3:F4}", TrimShare[0], TrimShare[1], TrimShare[2], TrimShare[3]));
             Plugin.Log.LogInfo("XRSHOT " + name + " (" + LayerSummary() + ", depth " + Separation + ", sky " + SkyDepth + ", pop-out " + PopOut + ")");
         }
     }
