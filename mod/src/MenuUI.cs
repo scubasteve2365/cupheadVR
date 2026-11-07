@@ -44,9 +44,9 @@ namespace CupheadVR
         internal Action Closed;
         internal Func<int> Volume;          // 0 off .. 3 high
         internal bool IsOpen { get; private set; }
-        internal RenderTexture Texture { get { return IsOpen ? rt : null; } }
+        internal RenderTexture Texture { get { return IsOpen ? outRt : null; } }
 
-        RenderTexture rt;
+        RenderTexture rt, outRt;  // outRt is upside down, the way the headset wants it (same as the eye images)
         Camera menuCam;
         GameObject root;
         Text[] tabText, labels, values;
@@ -88,6 +88,8 @@ namespace CupheadVR
         {
             rt = new RenderTexture(TexW, TexH, 24, RenderTextureFormat.ARGB32) { name = "CupheadVR menu" };
             rt.Create();
+            outRt = new RenderTexture(TexW, TexH, 0, RenderTextureFormat.ARGB32) { name = "CupheadVR menu out" };
+            outRt.Create();
             var camGo = new GameObject("CupheadVR menu camera");
             DontDestroyOnLoad(camGo);
             camGo.transform.position = new Vector3(0f, 50000f, -10f);  // far from any scene, so game cameras never see it
@@ -308,6 +310,7 @@ namespace CupheadVR
             }
             help.text = selected < rows.Count && rows[selected].Help != null ? rows[selected].Help() : "";
             menuCam.Render();
+            Graphics.Blit(rt, outRt, new Vector2(1f, -1f), new Vector2(0f, 1f));
         }
 
         void Update()

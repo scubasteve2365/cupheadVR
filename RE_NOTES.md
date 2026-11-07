@@ -153,3 +153,23 @@ put back. Things moved in Update or LateUpdate (camera, parallax, animation fram
 Restore check: 0 errors over about 8,000 eye pairs (depth layers back where they were after each render). Eye check
 0 of 8,433,216. 72, 90 and 120 Hz not run (the null driver runs 144 only).
 Menu row added: Smooth motion On/Off (default On, config VR.SmoothMotion).
+
+## Build 4 (live on RigB, 2026-11-07)
+
+- Restore errors found in Steve's RigA log (Cagney Carnation, `scene_level_flower`, about 4 per frame, build 3): depth
+  layers nested under other shifted transforms were put back in the wrong order. Build 4 sorts every shifted transform
+  parents first, shifts and restores in that order. Flower on RigB: restore errors 0 over the whole run.
+- Layer depth: a background layer with speed s now sits at `1 - (1 - s)^LayerDepth`, foreground at `s * LayerDepth`, so
+  more depth never passes the horizon. Default 150%.
+- Character pop: play-plane sprites (not particles) get a small depth by the game's sorting layer: Background +0.05,
+  Enemies -0.05, Player -0.06, Projectiles and Effects -0.08, Foreground -0.12, ForegroundEffects -0.15, times the setting.
+- Flower stereo at 1/3 size (1291 wide): dy 0 on 369 of 409 patches; disparities -33 (foreground), -2 to +2 (character
+  pop and ground), +12/13 (background), +37 (sky). Eye check 0 of 8,433,216.
+- Grain and fringe: Harmony prefix and postfix on `ChromaticAberrationFilmGrain.OnRenderImage` scale `intensity` and
+  `SettingsData.Data.chromaticAberration` for the pass only. Grain 0 shot looked clean (b4\scene_level_flower_f7036).
+- Menu: own OpenXR quad (both eyes, after the stage quads), placed 0.75 m ahead and 8 cm low where it opens, 0.8 m wide.
+  The menu render texture must be flipped like the eye images; SteamVR's headset window shows it upright
+  (evidence\CupheadVR\2026-11-07\b4\headset_menu.png). Fonts loaded by the game at runtime: CupheadMemphis-Medium-merged,
+  CupheadVogue-Bold-merged (not bundled).
+- Lab trap: commands queued while the game is not running sit in vrlab_command.txt and run at the next start (a stale
+  `menu` opened the menu and paused the game on its boot screen). Delete the file before launching.
