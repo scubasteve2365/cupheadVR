@@ -4,7 +4,7 @@ Updated 2026-11-07 (RigB).
 
 ## Where things stand
 
-Build 2: the game on a stage in the headset, native stereo (both eyes from one tick), depth from the game's own
+Build 3 (on RigA 2026-11-07, CupheadVR.dll sha256 dd87e3c1...f509f): build 2 plus smooth motion. Build 2: the game on a stage in the headset, native stereo (both eyes from one tick), depth from the game's own
 parallax speeds, head tracked, black surround, in-headset menu. Details and evidence in RE_NOTES.md.
 
 | File | sha256 |
@@ -27,7 +27,7 @@ To the overworld: `py -3.12 C:\VRLab\games\CupheadVR\to_game.py 2`. Lab.BlockSav
 
 ## Open questions
 
-1. Motion smoothness: game steps at 60 Hz while the headset shows 72 to 120 Hz. Steve's eyes first; then measure
+1. Motion smoothness: build 3 draws moving things between the 60 Hz game steps (RE_NOTES, Build 3). Waiting for Steve.
    `match 1` (needs a way to drive the player in the lab: the virtual pad joins as Player 2).
 2. Overworld: front facing, flat for now (Steve, 2026-11-07: not tilted, like Ori). No depth there yet.
 3. Root Pack style skies: pushed back by default (Sky distance), waiting for Steve's view.
