@@ -15,9 +15,13 @@ from PIL import Image
 p = sys.argv[1]
 L = np.asarray(Image.open(p + "_L.png").convert("RGB"))
 R = np.asarray(Image.open(p + "_R.png").convert("RGB"))
+# Work at about 1280 wide; disparities are reported in pixels of that size (scale printed).
+scale = max(1, round(L.shape[1] / 1280))
+L = L[::scale, ::scale]
+R = R[::scale, ::scale]
 gl, gr = L.mean(2), R.mean(2)
 h, w = gl.shape
-B, S, V = 32, 48, 4
+B, S, V = 32, 64, 4
 dxs, dys = [], []
 for y in range(V + B, h - B - V, B):
     for x in range(S, w - B - S, B):
@@ -32,7 +36,7 @@ for y in range(V + B, h - B - V, B):
                     best = (d, dx, dy)
         if best[0] < 4:
             dxs.append(best[1]); dys.append(best[2])
-print(f"{p}: identical pixels {np.mean((L == R).all(2)) * 100:.1f}%, matched patches {len(dxs)}")
+print(f"{p} (1/{scale} size): identical pixels {np.mean((L == R).all(2)) * 100:.1f}%, matched patches {len(dxs)}")
 print("  dy counts:", sorted(Counter(dys).items()))
 print("  dx counts:", sorted(Counter(dxs).items()))
 Image.fromarray(np.concatenate([L, R], 1)).save(p + "_SBS.png")

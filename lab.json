@@ -12,6 +12,14 @@
     {
       "from": "build\\CupheadVR.dll",
       "to": "BepInEx\\plugins\\CupheadVR\\CupheadVR.dll"
+    },
+    {
+      "from": "build\\CupheadVRNative.dll",
+      "to": "BepInEx\\plugins\\CupheadVR\\CupheadVRNative.dll"
+    },
+    {
+      "from": "build\\openxr_loader.dll",
+      "to": "BepInEx\\plugins\\CupheadVR\\openxr_loader.dll"
     }
   ],
   "riga": {
@@ -21,6 +29,89 @@
       {
         "from": "build\\CupheadVR.dll",
         "name": "CupheadVR.dll"
+      },
+      {
+        "from": "build\\CupheadVRNative.dll",
+        "name": "CupheadVRNative.dll"
+      },
+      {
+        "from": "build\\openxr_loader.dll",
+        "name": "openxr_loader.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\.doorstop_version",
+        "name": ".doorstop_version",
+        "to": ".doorstop_version"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\doorstop_config.ini",
+        "name": "doorstop_config.ini",
+        "to": "doorstop_config.ini"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\winhttp.dll",
+        "name": "winhttp.dll",
+        "to": "winhttp.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\0Harmony.dll",
+        "name": "0Harmony.dll",
+        "to": "BepInEx\\core\\0Harmony.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\0Harmony20.dll",
+        "name": "0Harmony20.dll",
+        "to": "BepInEx\\core\\0Harmony20.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\BepInEx.Harmony.dll",
+        "name": "BepInEx.Harmony.dll",
+        "to": "BepInEx\\core\\BepInEx.Harmony.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\BepInEx.Preloader.dll",
+        "name": "BepInEx.Preloader.dll",
+        "to": "BepInEx\\core\\BepInEx.Preloader.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\BepInEx.dll",
+        "name": "BepInEx.dll",
+        "to": "BepInEx\\core\\BepInEx.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\HarmonyXInterop.dll",
+        "name": "HarmonyXInterop.dll",
+        "to": "BepInEx\\core\\HarmonyXInterop.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\Mono.Cecil.Mdb.dll",
+        "name": "Mono.Cecil.Mdb.dll",
+        "to": "BepInEx\\core\\Mono.Cecil.Mdb.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\Mono.Cecil.Pdb.dll",
+        "name": "Mono.Cecil.Pdb.dll",
+        "to": "BepInEx\\core\\Mono.Cecil.Pdb.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\Mono.Cecil.Rocks.dll",
+        "name": "Mono.Cecil.Rocks.dll",
+        "to": "BepInEx\\core\\Mono.Cecil.Rocks.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\Mono.Cecil.dll",
+        "name": "Mono.Cecil.dll",
+        "to": "BepInEx\\core\\Mono.Cecil.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\MonoMod.RuntimeDetour.dll",
+        "name": "MonoMod.RuntimeDetour.dll",
+        "to": "BepInEx\\core\\MonoMod.RuntimeDetour.dll"
+      },
+      {
+        "from": "C:\\VRLab\\bin\\BepInEx_5.4.23.6_x64\\pkg\\BepInEx\\core\\MonoMod.Utils.dll",
+        "name": "MonoMod.Utils.dll",
+        "to": "BepInEx\\core\\MonoMod.Utils.dll"
       }
     ]
   }

@@ -258,6 +258,29 @@ namespace CupheadVR
             Destroy(eyes[0]); Destroy(eyes[1]);
         }
 
+        // Game speed test: player one's position over a few seconds (run distance, highest point).
+        internal void Track(float seconds) { StartCoroutine(TrackRoutine(seconds)); }
+
+        IEnumerator TrackRoutine(float seconds)
+        {
+            var p = PlayerManager.GetPlayer(PlayerId.PlayerOne);
+            if (p == null) { Plugin.Log.LogWarning("track: no player"); yield break; }
+            var start = p.transform.position;
+            float t0 = Time.realtimeSinceStartup, maxY = start.y;
+            int frames = 0, f0 = Time.frameCount;
+            while (Time.realtimeSinceStartup - t0 < seconds)
+            {
+                yield return null;
+                if (p == null) yield break;
+                maxY = Mathf.Max(maxY, p.transform.position.y);
+                frames++;
+            }
+            var end = p.transform.position;
+            float span = Time.realtimeSinceStartup - t0;
+            Plugin.Log.LogInfo(string.Format(Inv, "TRACK {0:F2} s real, {1} frames ({2:F1} fps), fixed {3:F5}: dx {4:F1} ({5:F1}/s) rise {6:F1}",
+                span, frames, frames / span, Time.fixedDeltaTime, end.x - start.x, (end.x - start.x) / span, maxY - start.y));
+        }
+
         internal void EnterSlot(int slot)
         {
             PlayerData.CurrentSaveFileIndex = slot;

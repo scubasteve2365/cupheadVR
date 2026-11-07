@@ -1,0 +1,526 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using HarmonyLib;
+using UnityEngine;
+
+namespace CupheadVR
+{
+    // Renders the game's camera stack once per eye from one game tick and hands both images to CupheadVRNative.
+    // Ported from OriVR's XrRig (MIT, scubasteve2365); the stereo method is new for Cuphead.
+    //
+    // The stage: a flat 16:9 rectangle fixed in the room shows the game. Cuphead draws flat sprites with orthographic
+    // cameras, and gives every background and foreground layer a parallax speed s (s = 0 moves with the world, s = 1 with
+    // the camera, s < 0 in front). A layer with speed s behaves like a layer at depth d/(1-s) behind a plane at distance d,
+    // so seen from an eye offset by x from the stage centre it shifts by x * s on the stage. Each eye moves every layer by
+    // that much, renders, and puts it back. The play plane and the HUD stay on the stage.
+    internal class XrRig : MonoBehaviour
+    {
+        const string Dll = "CupheadVRNative";
+        const int EventInit = 1, EventSubmit = 2, EventShutdown = 3, EventResize = 4;
+
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        struct EyeView { public float px, py, pz, qx, qy, qz, qw, left, right, up, down; }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        struct FrameInfo
+        {
+            public int running, shouldRender, viewsValid, sessionState;
+            public float periodMs;
+            public EyeView eye0, eye1;
+        }
+
+        [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Ansi)] static extern IntPtr LoadLibraryA(string path);
+        [DllImport("kernel32", CharSet = CharSet.Ansi, ExactSpelling = true)] static extern IntPtr GetProcAddress(IntPtr module, string name);
+
+        // Unity's Mono will not bind a DllImport to a DLL in the plugin folder, so the functions are fetched by hand.
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate IntPtr GetRenderEventFn();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int StateFn();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SetStageFn(float cx, float cy, float cz, float width, float height, float qy, float qw);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SetSizeFn(int width, int height);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SetSharpenFn(float amount);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void DumpNextFn([MarshalAs(UnmanagedType.LPStr)] string basePath);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int RecommendedWidthFn();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void StartFn(IntPtr left, IntPtr right, int width, int height);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int BeginFrameFn(out FrameInfo info, IntPtr left, IntPtr right);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int PopLogFn(StringBuilder buffer, int size);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void StatsFn(out uint frames, out uint layers, out uint skipped);
+
+        GetRenderEventFn xGetRenderEvent;
+        StateFn xState, xTakeRecenter;
+        SetStageFn xSetStage;
+        SetSizeFn xSetSize;
+        SetSharpenFn xSetSharpen;
+        DumpNextFn xDumpNext;
+        RecommendedWidthFn xRecommendedWidth;
+        StartFn xStart;
+        BeginFrameFn xBeginFrame;
+        PopLogFn xPopLog;
+        StatsFn xStats;
+
+        static T Fn<T>(IntPtr module, string name) where T : class
+        {
+            var p = GetProcAddress(module, name);
+            if (p == IntPtr.Zero) throw new EntryPointNotFoundException(name);
+            return Marshal.GetDelegateForFunctionPointer(p, typeof(T)) as T;
+        }
+
+        internal string PluginDir, ShotDir;
+        internal float StageWidth = 1.85f, StageDistance = 1.0f, Separation = 1.0f;
+        internal float Sharpness = 1.0f;  // resolution scale: 1 matches the headset's pixel density across the stage
+        internal float PopOut;            // 0 keeps the play plane on the stage; higher brings everything toward you
+        internal float SkyDepth = 0.85f;  // depth given to skies and scrolling clouds that have no parallax speed of their own
+        internal float Sharpen = 0.3f;
+        internal int EyeWidth = 2560, EyeHeight = 1440;
+        internal bool FlipY = true, Stamp;
+        internal MenuUI Menu;
+        internal bool MatchRefresh;  // one fixed game step per headset frame (Ori's way to keep motion smooth)
+        float savedFixed = -1f;
+
+        Vector3 viewPoint;
+        Quaternion viewTurn = Quaternion.identity;
+        bool wantRecenter = true;
+        float eyeTanSpan;
+        bool nativeLoaded, active, wantShot, loggedPose;
+        IntPtr renderEvent;
+        readonly RenderTexture[] eyeRender = new RenderTexture[2];
+        readonly RenderTexture[] eyeOut = new RenderTexture[2];
+        Material copyMat, blendMat;
+        Texture2D stampTex;
+        int savedTargetFps, savedVsync;
+        readonly StringBuilder logBuf = new StringBuilder(512);
+        uint renderedPairs;
+        int lastState = -1, eyeCheckFrames;
+
+        internal bool Active { get { return active; } }
+
+        bool LoadNative()
+        {
+            if (nativeLoaded) return true;
+            var path = Path.Combine(PluginDir, Dll + ".dll");
+            var module = LoadLibraryA(path);
+            if (module == IntPtr.Zero)
+            {
+                Plugin.Log.LogError("could not load " + path + ", error " + Marshal.GetLastWin32Error());
+                return false;
+            }
+            xGetRenderEvent = Fn<GetRenderEventFn>(module, "CupXR_GetRenderEvent");
+            xState = Fn<StateFn>(module, "CupXR_State");
+            xTakeRecenter = Fn<StateFn>(module, "CupXR_TakeRecenter");
+            xSetStage = Fn<SetStageFn>(module, "CupXR_SetStage");
+            xSetSize = Fn<SetSizeFn>(module, "CupXR_SetSize");
+            xSetSharpen = Fn<SetSharpenFn>(module, "CupXR_SetSharpen");
+            xDumpNext = Fn<DumpNextFn>(module, "CupXR_DumpNext");
+            xRecommendedWidth = Fn<RecommendedWidthFn>(module, "CupXR_RecommendedWidth");
+            xStart = Fn<StartFn>(module, "CupXR_Start");
+            xBeginFrame = Fn<BeginFrameFn>(module, "CupXR_BeginFrame");
+            xPopLog = Fn<PopLogFn>(module, "CupXR_PopLog");
+            xStats = Fn<StatsFn>(module, "CupXR_Stats");
+            renderEvent = xGetRenderEvent();
+            nativeLoaded = true;
+            return true;
+        }
+
+        internal void Begin()
+        {
+            if (active || !LoadNative()) return;
+            var shader = Shader.Find("Hidden/BlitCopy");
+            var blend = Shader.Find("Sprites/Default") ?? Shader.Find("UI/Default");
+            if (shader == null || blend == null) { Plugin.Log.LogError("VR: missing shader BlitCopy " + (shader != null) + " blend " + (blend != null)); return; }
+            copyMat = new Material(shader);
+            blendMat = new Material(blend);
+            MakeTextures(EyeWidth, EyeHeight);
+            stampTex = new Texture2D(32, 1, TextureFormat.RGB24, false);
+            stampTex.filterMode = FilterMode.Point;
+            savedTargetFps = Application.targetFrameRate;
+            savedVsync = QualitySettings.vSyncCount;
+            Application.targetFrameRate = -1;
+            QualitySettings.vSyncCount = 0;  // xrWaitFrame paces the game now
+            ApplyStage();
+            xStart(eyeOut[0].GetNativeTexturePtr(), eyeOut[1].GetNativeTexturePtr(), EyeWidth, EyeHeight);
+            GL.IssuePluginEvent(renderEvent, EventInit);
+            active = true;
+            Plugin.Log.LogInfo(string.Format("VR starting: eye {0}x{1}, stage {2} m wide at {3} m, depth x{4}", EyeWidth, EyeHeight, StageWidth, StageDistance, Separation));
+            StartCoroutine(Loop());
+        }
+
+        internal void End()
+        {
+            if (!active) return;
+            active = false;
+            Application.targetFrameRate = savedTargetFps;
+            QualitySettings.vSyncCount = savedVsync;
+            GL.IssuePluginEvent(renderEvent, EventShutdown);
+            Plugin.Log.LogInfo("VR stopped after " + renderedPairs + " eye pairs");
+        }
+
+        void MakeTextures(int width, int height)
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                var r = eyeRender[i];
+                var o = eyeOut[i];
+                eyeRender[i] = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32) { name = "CupheadVR eye render " + i };
+                eyeRender[i].Create();
+                eyeOut[i] = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32) { name = "CupheadVR eye out " + i };
+                eyeOut[i].Create();
+                if (r != null) Destroy(r);  // frames already queued hold their own reference to the old texture
+                if (o != null) Destroy(o);
+            }
+        }
+
+        internal void Shot() { wantShot = true; }
+        internal void Recenter() { wantRecenter = true; }
+        internal void Dump(string basePath) { if (nativeLoaded) xDumpNext(basePath); }
+        internal void EyeCheck() { eyeCheckFrames = 4; }
+
+        internal int WantedWidth()
+        {
+            int rec = xRecommendedWidth != null ? xRecommendedWidth() : 0;
+            if (rec <= 0 || eyeTanSpan <= 0f) return EyeWidth;
+            int w = Mathf.RoundToInt(rec * (StageWidth / StageDistance) / eyeTanSpan * Sharpness);
+            return Mathf.Clamp(w / 16 * 16, 1280, 6144);
+        }
+
+        // Rebuilds the eye textures when the stage or resolution calls for a size more than 3 percent away.
+        internal void UpdateResolution()
+        {
+            if (!active || xState() != 2) return;
+            int w = WantedWidth();
+            if (Mathf.Abs(w - EyeWidth) <= EyeWidth * 0.03f) return;
+            int h = w * 9 / 16;
+            MakeTextures(w, h);
+            EyeWidth = w;
+            EyeHeight = h;
+            xSetSize(w, h);
+            GL.IssuePluginEvent(renderEvent, EventResize);
+            ApplyStage();
+            Plugin.Log.LogInfo(string.Format("RESOLUTION eye {0}x{1}, stage {2:F2} m at {3:F2} m, scale {4:F2}", w, h, StageWidth, StageDistance, Sharpness));
+        }
+
+        void MatchTick(float periodMs)
+        {
+            float want = MatchRefresh && periodMs > 0f ? periodMs / 1000f : (savedFixed > 0f ? savedFixed : -1f);
+            if (want <= 0f || Mathf.Abs(Time.fixedDeltaTime - want) < 0.00002f) return;
+            if (savedFixed < 0f) savedFixed = Time.fixedDeltaTime;
+            Time.fixedDeltaTime = want;
+            Plugin.Log.LogInfo(string.Format("REFRESH fixed step {0:F5} s ({1:F2} Hz)", want, 1f / want));
+        }
+
+        void TakeView(FrameInfo info)
+        {
+            var a = new Vector3(info.eye0.px, info.eye0.py, info.eye0.pz);
+            var b = new Vector3(info.eye1.px, info.eye1.py, info.eye1.pz);
+            viewPoint = (a + b) * 0.5f;
+            var forward = new Quaternion(info.eye0.qx, info.eye0.qy, info.eye0.qz, info.eye0.qw) * new Vector3(0f, 0f, -1f);
+            viewTurn = Quaternion.Euler(0f, Mathf.Atan2(-forward.x, -forward.z) * Mathf.Rad2Deg, 0f);
+            eyeTanSpan = Mathf.Tan(info.eye0.right) - Mathf.Tan(info.eye0.left);
+            ApplyStage();
+            Plugin.Log.LogInfo("headset recommends " + xRecommendedWidth() + " wide over " + eyeTanSpan.ToString("F2") + " of flat view");
+            Plugin.Log.LogInfo(string.Format("RECENTER view ({0:F2},{1:F2},{2:F2}), turned {3:F0} degrees", viewPoint.x, viewPoint.y, viewPoint.z, viewTurn.eulerAngles.y));
+        }
+
+        internal void ApplyStage()
+        {
+            if (!nativeLoaded) return;
+            xSetSharpen(Sharpen);
+            var c = viewPoint + viewTurn * new Vector3(0f, 0f, -StageDistance);
+            xSetStage(c.x, c.y, c.z, StageWidth, StageWidth * 9f / 16f, viewTurn.y, viewTurn.w);
+        }
+
+        void Update()
+        {
+            if (!nativeLoaded) return;
+            while (xPopLog(logBuf, logBuf.Capacity) != 0)
+            {
+                Plugin.Log.LogInfo("XR: " + logBuf);
+                logBuf.Length = 0;
+            }
+            logBuf.Length = 0;
+        }
+
+        IEnumerator Loop()
+        {
+            var wait = new WaitForEndOfFrame();
+            float nextStat = Time.realtimeSinceStartup + 5f;
+            int framesAtStat = Time.frameCount;
+            while (active)
+            {
+                yield return wait;
+                if (!active) break;
+                int state = xState();
+                if (state != lastState)
+                {
+                    lastState = state;
+                    Plugin.Log.LogInfo("XR native state " + state);
+                }
+                if (state == 3) { End(); yield break; }
+                if (state != 2) continue;
+                // The game sets 60 fps with vsync again on every level load (seen live); the headset paces it instead.
+                if (Application.targetFrameRate != -1 || QualitySettings.vSyncCount != 0)
+                {
+                    Plugin.Log.LogInfo("VR: game set targetFrameRate " + Application.targetFrameRate + " vsync " + QualitySettings.vSyncCount + ", lifted");
+                    Application.targetFrameRate = -1;
+                    QualitySettings.vSyncCount = 0;
+                }
+                for (int i = 0; i < 2; i++)
+                {
+                    if (!eyeRender[i].IsCreated()) eyeRender[i].Create();
+                    if (!eyeOut[i].IsCreated()) eyeOut[i].Create();
+                }
+                FrameInfo info;
+                if (xBeginFrame(out info, eyeOut[0].GetNativeTexturePtr(), eyeOut[1].GetNativeTexturePtr()) == 0) continue;
+                if (xTakeRecenter() != 0) wantRecenter = true;
+                MatchTick(info.periodMs);
+                if (info.viewsValid != 0 && wantRecenter)
+                {
+                    wantRecenter = false;
+                    TakeView(info);
+                    UpdateResolution();
+                }
+                if (info.shouldRender != 0) RenderEyes(info);
+                GL.IssuePluginEvent(renderEvent, EventSubmit);
+
+                float now = Time.realtimeSinceStartup;
+                if (now >= nextStat)
+                {
+                    uint frames, layers, skipped;
+                    xStats(out frames, out layers, out skipped);
+                    float span = now - (nextStat - 5f);
+                    Plugin.Log.LogInfo(string.Format("XRSTAT state {0} shouldRender {1} period {2:F2} ms, unity {3:F1} fps, submitted {4}, with images {5}, skipped {6}, pairs {7}, eye {8}x{9}",
+                        info.sessionState, info.shouldRender, info.periodMs, (Time.frameCount - framesAtStat) / span, frames, layers, skipped, renderedPairs, EyeWidth, EyeHeight));
+                    nextStat = now + 5f;
+                    framesAtStat = Time.frameCount;
+                }
+            }
+        }
+
+        // The layers that get a depth, refreshed a few times a second because levels spawn and remove scenery.
+        readonly List<KeyValuePair<Transform, float>> depthLayers = new List<KeyValuePair<Transform, float>>();
+        int layersFrame = -1000;
+        int skyCount;
+
+        void CollectLayers()
+        {
+            if (Time.frameCount - layersFrame < 20) return;
+            layersFrame = Time.frameCount;
+            depthLayers.Clear();
+            skyCount = 0;
+            var taken = new HashSet<Transform>();
+            foreach (var p in FindObjectsOfType<PlatformingLevelParallax>())
+            {
+                var props = Traverse.Create(p).Property("LayerProperties");
+                object speed = props.GetValue() != null ? props.Field("speed").GetValue() : null;
+                if (speed is float && taken.Add(p.transform)) depthLayers.Add(new KeyValuePair<Transform, float>(p.transform, (float)speed));
+            }
+            foreach (var p in FindObjectsOfType<ParallaxLayer>())
+            {
+                if (!taken.Add(p.transform)) continue;
+                // MinMax layers scroll inside a range of their own (Root Pack clouds), so their percentage is not a depth.
+                bool sky = p.type == ParallaxLayer.Type.MinMax && Mathf.Abs(p.percentage) < 0.001f;
+                if (sky) skyCount++;
+                depthLayers.Add(new KeyValuePair<Transform, float>(p.transform, sky ? float.NaN : p.percentage));
+            }
+            foreach (var p in FindObjectsOfType<MapParallaxLayer>())
+                if (taken.Add(p.transform)) depthLayers.Add(new KeyValuePair<Transform, float>(p.transform, p.percentage));
+            // Backdrops with no parallax at all, drawn behind everything else (Root Pack sky, sorting order -1000).
+            foreach (var r in FindObjectsOfType<SpriteRenderer>())
+            {
+                if (r.sortingLayerName != "Background" || r.sortingOrder > -500) continue;
+                if (HasTaken(r.transform, taken)) continue;
+                taken.Add(r.transform);
+                skyCount++;
+                depthLayers.Add(new KeyValuePair<Transform, float>(r.transform, float.NaN));
+            }
+        }
+
+        static bool HasTaken(Transform t, HashSet<Transform> taken)
+        {
+            for (var cur = t; cur != null; cur = cur.parent) if (taken.Contains(cur)) return true;
+            return false;
+        }
+
+        internal string LayerSummary()
+        {
+            CollectLayers();
+            return depthLayers.Count + " layers, " + skyCount + " sky";
+        }
+
+        static Camera WorldCamera()
+        {
+            foreach (var c in Camera.allCameras) if (c.GetComponent<AbstractCupheadGameCamera>() != null) return c;
+            return null;
+        }
+
+        void RenderEyes(FrameInfo info)
+        {
+            if (info.viewsValid != 0 && !loggedPose)
+            {
+                loggedPose = true;
+                Plugin.Log.LogInfo(string.Format("XRVIEW left pos ({0:F3},{1:F3},{2:F3}) fov L {3:F3} R {4:F3} U {5:F3} D {6:F3}; right pos ({7:F3},{8:F3},{9:F3})",
+                    info.eye0.px, info.eye0.py, info.eye0.pz, info.eye0.left, info.eye0.right, info.eye0.up, info.eye0.down, info.eye1.px, info.eye1.py, info.eye1.pz));
+            }
+            CollectLayers();
+            var world = WorldCamera();
+            float viewWidth = world != null ? world.orthographicSize * 2f * 16f / 9f : 1280f;
+            float unitsPerMetre = viewWidth / StageWidth;
+            bool checking = eyeCheckFrames > 0;
+            bool compareNow = eyeCheckFrames == 1;
+            if (eyeCheckFrames > 0) eyeCheckFrames--;
+            var cams = Camera.allCameras.OrderBy(c => c.depth).ToArray();
+            var saved = new Vector3[depthLayers.Count];
+            for (int i = 0; i < depthLayers.Count; i++) saved[i] = depthLayers[i].Key != null ? depthLayers[i].Key.position : Vector3.zero;
+            Vector3 worldSaved = world != null ? world.transform.position : Vector3.zero;
+
+            for (int eye = 0; eye < 2; eye++)
+            {
+                var e = eye == 0 ? info.eye0 : info.eye1;
+                // Without valid tracking, stand at the stage's normal viewing spot with a fixed eye gap.
+                var local = checking ? Vector3.zero : info.viewsValid != 0
+                    ? Quaternion.Inverse(viewTurn) * (new Vector3(e.px, e.py, e.pz) - viewPoint)
+                    : new Vector3(eye == 0 ? -0.0315f : 0.0315f, 0f, 0f);
+                var shift = new Vector2(local.x, local.y) * unitsPerMetre * Separation;
+                for (int i = 0; i < depthLayers.Count; i++)
+                {
+                    var t = depthLayers[i].Key;
+                    if (t == null) continue;
+                    float s = float.IsNaN(depthLayers[i].Value) ? SkyDepth : depthLayers[i].Value;
+                    t.position = saved[i] + new Vector3(shift.x * s, shift.y * s, 0f);
+                }
+                // Pop-out moves the zero-depth plane back: the whole world shifts toward you, the HUD stays.
+                if (world != null) world.transform.position = worldSaved + new Vector3(shift.x * PopOut, shift.y * PopOut, 0f);
+                RenderStack(cams, eyeRender[eye]);
+                if (Menu != null && Menu.IsOpen) DrawMenu(eyeRender[eye], shift / viewWidth);
+                Finish(eye);
+            }
+            for (int i = 0; i < depthLayers.Count; i++) if (depthLayers[i].Key != null) depthLayers[i].Key.position = saved[i];
+            if (world != null) world.transform.position = worldSaved;
+            renderedPairs++;
+            if (wantShot) { wantShot = false; SaveEyes(); }
+            if (compareNow) CompareEyes();
+        }
+
+        static void RenderStack(Camera[] cams, RenderTexture target)
+        {
+            var old = RenderTexture.active;
+            RenderTexture.active = target;
+            GL.Clear(true, true, Color.black);
+            foreach (var cam in cams)
+            {
+                if (cam == null || !cam.enabled) continue;
+                var prev = cam.targetTexture;
+                cam.targetTexture = target;
+                cam.Render();
+                cam.targetTexture = prev;
+            }
+            RenderTexture.active = old;
+        }
+
+        // The menu floats in front of the stage: it shifts against the eye like a layer with speed MenuDepth.
+        const float MenuDepth = -0.2f, MenuWidth = 0.62f;
+
+        void DrawMenu(RenderTexture target, Vector2 shiftOfView)
+        {
+            var tex = Menu.Texture;
+            if (tex == null) return;
+            float w = MenuWidth, h = MenuWidth * tex.height / tex.width * 16f / 9f;
+            float cx = 0.5f + shiftOfView.x * MenuDepth, cy = 0.5f + shiftOfView.y * MenuDepth * 16f / 9f;
+            var old = RenderTexture.active;
+            RenderTexture.active = target;
+            GL.PushMatrix();
+            GL.LoadOrtho();
+            blendMat.mainTexture = tex;
+            blendMat.SetPass(0);
+            GL.Begin(GL.QUADS);
+            GL.Color(Color.white);
+            GL.TexCoord2(0f, 0f); GL.Vertex3(cx - w / 2, cy - h / 2, 0f);
+            GL.TexCoord2(0f, 1f); GL.Vertex3(cx - w / 2, cy + h / 2, 0f);
+            GL.TexCoord2(1f, 1f); GL.Vertex3(cx + w / 2, cy + h / 2, 0f);
+            GL.TexCoord2(1f, 0f); GL.Vertex3(cx + w / 2, cy - h / 2, 0f);
+            GL.End();
+            GL.PopMatrix();
+            RenderTexture.active = old;
+        }
+
+        // Copies the eye image to the texture the native side sends on, upside down if asked, with the frame number.
+        void Finish(int i)
+        {
+            var old = RenderTexture.active;
+            RenderTexture.active = eyeOut[i];
+            copyMat.mainTexture = eyeRender[i];
+            GL.PushMatrix();
+            GL.LoadOrtho();
+            copyMat.SetPass(0);
+            float top = FlipY ? 0f : 1f, bottom = 1f - top;
+            GL.Begin(GL.QUADS);
+            GL.TexCoord2(0f, bottom); GL.Vertex3(0f, 0f, 0f);
+            GL.TexCoord2(0f, top); GL.Vertex3(0f, 1f, 0f);
+            GL.TexCoord2(1f, top); GL.Vertex3(1f, 1f, 0f);
+            GL.TexCoord2(1f, bottom); GL.Vertex3(1f, 0f, 0f);
+            GL.End();
+            if (Stamp)
+            {
+                // 32 blocks, least significant bit first, along the image's lower left edge.
+                int frame = Time.frameCount;
+                for (int b = 0; b < 32; b++) stampTex.SetPixel(b, 0, ((frame >> b) & 1) != 0 ? Color.white : Color.black);
+                stampTex.Apply();
+                copyMat.mainTexture = stampTex;
+                copyMat.SetPass(0);
+                float w = 32f * 12f / eyeOut[i].width, h = 12f / eyeOut[i].height;
+                GL.Begin(GL.QUADS);
+                GL.TexCoord2(0f, 0f); GL.Vertex3(0f, 0f, 0f);
+                GL.TexCoord2(0f, 1f); GL.Vertex3(0f, h, 0f);
+                GL.TexCoord2(1f, 1f); GL.Vertex3(w, h, 0f);
+                GL.TexCoord2(1f, 0f); GL.Vertex3(w, 0f, 0f);
+                GL.End();
+            }
+            GL.PopMatrix();
+            RenderTexture.active = old;
+        }
+
+        Color32[] ReadEye(int i, string file)
+        {
+            var old = RenderTexture.active;
+            RenderTexture.active = eyeOut[i];
+            var tex = new Texture2D(eyeOut[i].width, eyeOut[i].height, TextureFormat.RGB24, false);
+            tex.ReadPixels(new Rect(0, 0, tex.width, tex.height), 0, 0);
+            tex.Apply();
+            RenderTexture.active = old;
+            if (file != null)
+            {
+                Directory.CreateDirectory(ShotDir);
+                File.WriteAllBytes(Path.Combine(ShotDir, file), tex.EncodeToPNG());
+            }
+            var px = tex.GetPixels32();
+            Destroy(tex);
+            return px;
+        }
+
+        void CompareEyes()
+        {
+            var a = ReadEye(0, "check_0.png");
+            var b = ReadEye(1, "check_1.png");
+            int differing = 0, max = 0;
+            for (int i = 0; i < a.Length; i++)
+            {
+                int d = Math.Max(Math.Abs(a[i].r - b[i].r), Math.Max(Math.Abs(a[i].g - b[i].g), Math.Abs(a[i].b - b[i].b)));
+                if (d > 0) differing++;
+                if (d > max) max = d;
+            }
+            Plugin.Log.LogInfo(string.Format("EYECHECK frame {0}: differing pixels {1} of {2}, max {3}", Time.frameCount, differing, a.Length, max));
+        }
+
+        void SaveEyes()
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            var name = scene + "_f" + Time.frameCount;
+            ReadEye(0, name + "_L.png");
+            ReadEye(1, name + "_R.png");
+            Plugin.Log.LogInfo("XRSHOT " + name + " (" + LayerSummary() + ", depth " + Separation + ", sky " + SkyDepth + ", pop-out " + PopOut + ")");
+        }
+    }
+}
