@@ -66,5 +66,5 @@ Notes
 - The game keeps its own 60 updates a second, so its speed is exactly the same as flat. Smooth motion draws the moving things in between.
 - Settings are saved in BepInEx\config\com.scubasteve2365.cupheadvr.cfg in the game folder.
 
-Version 1.0. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
+Version 1.01. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
 This is a fan mod, not made or approved by Studio MDHR.

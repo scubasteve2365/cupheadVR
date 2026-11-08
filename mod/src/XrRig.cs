@@ -76,7 +76,9 @@ namespace CupheadVR
         internal float Sharpness = 1.0f;  // resolution scale: 1 matches the headset's pixel density across the stage
         internal float PopOut;            // 0 keeps the play plane on the stage; higher brings everything toward you
         internal float SkyDepth = 0.85f;
-        internal float CharacterPop = 1.0f;  // play-plane layering by the game's sorting layers, 1 = default spread  // depth given to skies and scrolling clouds that have no parallax speed of their own
+        internal float CharacterPop = 1.0f;
+        internal float LeanParallax;
+        internal Vector3 LabHead;  // lab: pretend the head moved this far from the recenter point (metres)  // 0: head movement does not move the layers against each other, 1: full  // play-plane layering by the game's sorting layers, 1 = default spread  // depth given to skies and scrolling clouds that have no parallax speed of their own
         internal float Sharpen = 0.3f;
         internal int EyeWidth = 2560, EyeHeight = 1440;
         internal bool FlipY = true, Stamp;
@@ -354,8 +356,8 @@ namespace CupheadVR
                     uint frames, layers, skipped;
                     xStats(out frames, out layers, out skipped);
                     float span = now - (nextStat - 5f);
-                    Plugin.Log.LogInfo(string.Format("XRSTAT state {0} shouldRender {1} period {2:F2} ms, unity {3:F1} fps, submitted {4}, with images {5}, skipped {6}, pairs {7}, eye {8}x{9}, smoothed {10} of {11}, restore errors {12}",
-                        info.sessionState, info.shouldRender, info.periodMs, (Time.frameCount - framesAtStat) / span, frames, layers, skipped, renderedPairs, EyeWidth, EyeHeight, Smoothed, SmoothCandidates, RestoreErrors));
+                    Plugin.Log.LogInfo(string.Format("XRSTAT state {0} shouldRender {1} period {2:F2} ms, unity {3:F1} fps, submitted {4}, with images {5}, skipped {6}, pairs {7}, eye {8}x{9}, smoothed {10} of {11}, restore errors {12}, drift {13:F3}",
+                        info.sessionState, info.shouldRender, info.periodMs, (Time.frameCount - framesAtStat) / span, frames, layers, skipped, renderedPairs, EyeWidth, EyeHeight, Smoothed, SmoothCandidates, RestoreErrors, DriftTotal));
                     nextStat = now + 5f;
                     framesAtStat = Time.frameCount;
                 }
@@ -465,6 +467,7 @@ namespace CupheadVR
         readonly Dictionary<Transform, Track> trackOf = new Dictionary<Transform, Track>();
         int tracksFrame = -1000;
         internal int Smoothed, SmoothCandidates, RestoreErrors;
+        internal float DriftTotal;  // summed local-position error left behind after renders, in world units
 
         IEnumerator SnapshotSteps()
         {
@@ -510,7 +513,7 @@ namespace CupheadVR
         }
 
         // Moves tracked things to their in-between place for this render. Returns what to put back.
-        readonly List<KeyValuePair<Transform, Vector3>> smoothUndo = new List<KeyValuePair<Transform, Vector3>>();
+        readonly List<KeyValuePair<Transform, Vector3>> smoothUndo = new List<KeyValuePair<Transform, Vector3>>();  // local positions
 
         void ApplySmooth()
         {
@@ -526,7 +529,7 @@ namespace CupheadVR
                 var now = k.t.position;
                 if (now != k.curr || k.prev == k.curr) continue;  // moved outside the steps, or not moving
                 if ((k.curr - k.prev).sqrMagnitude > 400f * 400f) continue;  // a jump, not motion
-                smoothUndo.Add(new KeyValuePair<Transform, Vector3>(k.t, now));
+                smoothUndo.Add(new KeyValuePair<Transform, Vector3>(k.t, k.t.localPosition));
                 k.t.position = Vector3.Lerp(k.prev, k.curr, alpha);
                 Smoothed++;
             }
@@ -534,7 +537,7 @@ namespace CupheadVR
 
         void UndoSmooth()
         {
-            for (int i = 0; i < smoothUndo.Count; i++) if (smoothUndo[i].Key != null) smoothUndo[i].Key.position = smoothUndo[i].Value;
+            for (int i = 0; i < smoothUndo.Count; i++) if (smoothUndo[i].Key != null) smoothUndo[i].Key.localPosition = smoothUndo[i].Value;
             smoothUndo.Clear();
         }
 
@@ -598,13 +601,27 @@ namespace CupheadVR
             var cams = Camera.allCameras.OrderBy(c => c.depth).ToArray();
             // Lab check that every render puts the game back exactly where it was.
             var before = new Vector3[depthLayers.Count];
-            for (int i = 0; i < depthLayers.Count; i++) before[i] = depthLayers[i].Key != null ? depthLayers[i].Key.position : Vector3.zero;
+            for (int i = 0; i < depthLayers.Count; i++) before[i] = depthLayers[i].Key != null ? depthLayers[i].Key.localPosition : Vector3.zero;
             // Smooth first, so the depth shifts below start from the in-between places and undo back to them.
             ApplySmooth();
             SampleEven();
+            // World positions to shift from, local positions to put back: a world position set back goes through the
+            // parent's matrix and can land a rounding step away, which built up over a long level (1.0, Discord reports).
             var saved = new Vector3[depthLayers.Count];
-            for (int i = 0; i < depthLayers.Count; i++) saved[i] = depthLayers[i].Key != null ? depthLayers[i].Key.position : Vector3.zero;
+            var savedLocal = new Vector3[depthLayers.Count];
+            for (int i = 0; i < depthLayers.Count; i++)
+            {
+                var t = depthLayers[i].Key;
+                saved[i] = t != null ? t.position : Vector3.zero;
+                savedLocal[i] = t != null ? t.localPosition : Vector3.zero;
+            }
             Vector3 worldSaved = world != null ? world.transform.position : Vector3.zero;
+            Vector3 worldSavedLocal = world != null ? world.transform.localPosition : Vector3.zero;
+            // Where the head is now, from both eyes, relative to where it was at the last recenter.
+            var headNow = info.viewsValid != 0 && !checking
+                ? Quaternion.Inverse(viewTurn) * ((new Vector3(info.eye0.px, info.eye0.py, info.eye0.pz) + new Vector3(info.eye1.px, info.eye1.py, info.eye1.pz)) * 0.5f - viewPoint)
+                : Vector3.zero;
+            if (!checking) headNow += LabHead;
             // Floating window: the nearest thing on the stage, as a speed relative to the stage frame (pop-out included).
             // A layer with relative speed f moves by shift * f in an eye's image, so near the edges each eye would show
             // a strip of picture the other eye does not have. Each eye's outer edge is trimmed by that much, so both
@@ -622,7 +639,14 @@ namespace CupheadVR
                 var local = checking ? Vector3.zero : info.viewsValid != 0
                     ? Quaternion.Inverse(viewTurn) * (new Vector3(e.px, e.py, e.pz) - viewPoint)
                     : new Vector3(eye == 0 ? -0.0315f : 0.0315f, 0f, 0f);
-                var shift = new Vector2(local.x, local.y) * unitsPerMetre;
+                // The eye's offset from the head centre gives the stereo. Moving the head itself (leaning, sitting taller
+                // than at recenter) slid the depth layers against each other, so Cuphead seemed to leave his ground and
+                // hitbox (1.0, Discord reports). Head movement now counts only as much as Lean parallax says, at most 15 cm.
+                if (!checking) local += LabHead;
+                var eyeFromHead = local - headNow;
+                var lean = Vector3.ClampMagnitude(headNow, 0.15f) * LeanParallax;
+                var shift = new Vector2(eyeFromHead.x + lean.x, eyeFromHead.y + lean.y) * unitsPerMetre;
+                var stereoShift = new Vector2(eyeFromHead.x, 0f) * unitsPerMetre;
                 for (int i = 0; i < depthLayers.Count; i++)
                 {
                     var t = depthLayers[i].Key;
@@ -633,14 +657,19 @@ namespace CupheadVR
                 // Pop-out moves the zero-depth plane back: the whole world shifts toward you, the HUD stays.
                 if (world != null) world.transform.position = worldSaved + new Vector3(shift.x * PopOut, shift.y * PopOut, 0f);
                 RenderStack(cams, eyeRender[eye]);
-                TrimEdges(eyeRender[eye], shift * nearest / viewWidth, eye);
+                // Trim by the stereo part only: head movement shows the same extra strip to both eyes, which is fine.
+                TrimEdges(eyeRender[eye], stereoShift * nearest / viewWidth, eye);
                 Finish(eye);
             }
-            for (int i = 0; i < depthLayers.Count; i++) if (depthLayers[i].Key != null) depthLayers[i].Key.position = saved[i];
-            if (world != null) world.transform.position = worldSaved;
+            for (int i = 0; i < depthLayers.Count; i++) if (depthLayers[i].Key != null) depthLayers[i].Key.localPosition = savedLocal[i];
+            if (world != null) world.transform.localPosition = worldSavedLocal;
             UndoSmooth();
             for (int i = 0; i < depthLayers.Count; i++)
-                if (depthLayers[i].Key != null && (depthLayers[i].Key.position - before[i]).sqrMagnitude > 1e-6f) RestoreErrors++;
+                if (depthLayers[i].Key != null && depthLayers[i].Key.localPosition != before[i])
+                {
+                    var dl = depthLayers[i].Key.localPosition - before[i];
+                    if (dl.x != 0f || dl.y != 0f || dl.z != 0f) { RestoreErrors++; DriftTotal += dl.magnitude; }
+                }
             renderedPairs++;
             if (wantShot) { wantShot = false; SaveEyes(); }
             if (compareNow) CompareEyes();

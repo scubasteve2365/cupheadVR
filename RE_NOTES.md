@@ -199,3 +199,26 @@ and the HP card sits well clear in the left eye (evidence\CupheadVR\2026-11-07\v
 CupheadVR 1.0.0, XR state 5, eye check 0 of 7,290,000, restore errors 0. Installer: install and uninstall from
 `odd path's [test] & more` with every file marked as downloaded; uninstall leaves the game folder as Steam installed it,
 install unblocks every file. Zip build\package\CupheadVR-1.0.zip, not published.
+
+## 1.01: two Discord reports on 1.0 (2026-11-08)
+
+Reports (Laffer, Press.Start): Cuphead drawn away from where he really is, worse deeper into a level, once vanished;
+the stage looked smaller at level start and grew when the head moved down.
+
+Causes found:
+1. Every eye shift used the eye's offset from the recenter point, so moving the head (sitting taller, leaning) slid
+   the depth layers against each other: with 1.0 defaults (pop-out 0.75, character pop 1.2) Cuphead slid off his
+   ground and hitbox by about 0.13 x head offset x 595 units/m (20 cm: about 15 units of a 720 view). The edge trim used
+   the same offset, so a head 20 cm high trimmed about a quarter of the stage height. Users drift away from the recenter
+   point over a session, hence "deeper into the level".
+2. Positions were put back by world position, which goes through the parent matrix: RigB counted 7,891 inexact
+   restores in 2 minutes of Forest Follies (0.17 units summed). Small, but it never resets for sprites the game does not
+   reposition itself.
+
+Fix: stereo comes from each eye's offset from the head centre only; head movement adds layer parallax only through
+the new Lean parallax setting (default 0, at most 15 cm). The edge trim uses the stereo part only, x only. Shifted
+transforms, the world camera and smoothed transforms are put back by localPosition (exact).
+
+Check on RigB (Forest Follies, game frozen, lab `fakehead` moving the head 10 cm right and 20 cm up): lean 0 gives a
+left eye pixel-identical to the centred head (0 of 7,290,000 differ); lean 100% (the 1.0 behaviour) changes 4,125,057
+pixels. Trim stays x 0.0234, y 0. Restore errors 0, drift 0.000 over the run.

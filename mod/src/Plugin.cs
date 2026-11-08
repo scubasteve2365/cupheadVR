@@ -12,10 +12,10 @@ namespace CupheadVR
     // CupheadVR 1.0: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
     // layers, smooth motion at any headset rate, and an in-headset menu (hold both sticks). VR starts by itself unless
     // VR.AutoStart is off; if OpenXR cannot start, the game stays flat. Lab probes stay available behind Lab.Commands.
-    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.0")]
+    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.1")]
     public class Plugin : BaseUnityPlugin
     {
-        internal const string Version = "1.0";
+        internal const string Version = "1.01";
         internal static BepInEx.Logging.ManualLogSource Log;
         internal static ConfigEntry<bool> BlockSaves;
         internal static ConfigEntry<float> Grain, Fringe;
@@ -27,7 +27,7 @@ namespace CupheadVR
         const float DefaultWidth = 2.15f, DefaultDistance = 1.25f, DefaultDepth = 1.3f, DefaultSky = 0.75f, DefaultSharpen = 1.0f,
             DefaultPop = 1.2f, DefaultPopOut = 0.75f, DefaultGrain = 0f, DefaultFringe = 0f;
         ConfigEntry<bool> labCommands, autoDump, autoStart, smooth, edgeMatch;
-        ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution, characterPop;
+        ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution, characterPop, lean;
         ConfigEntry<int> clickVolume;
         string commandFile;
         int nextCommandCheck;
@@ -50,6 +50,7 @@ namespace CupheadVR
             depth = Config.Bind("VR", "LayerDepth", DefaultDepth, "How far apart the background layers spread. 1 is the game's own spacing; higher spreads them without passing the horizon.");
             popOut = Config.Bind("VR", "PopOut", DefaultPopOut, "0 keeps the play plane on the stage. Higher brings the scene toward you.");
             characterPop = Config.Bind("VR", "CharacterPop", DefaultPop, "Lifts characters, bullets and effects off the play plane by the game's own drawing layers. 0 is flat.");
+            lean = Config.Bind("VR", "LeanParallax", 0f, "How much leaning your head moves the layers against each other. 0 keeps Cuphead on his ground whatever your head does.");
             skyDepth = Config.Bind("VR", "SkyDepth", DefaultSky, "How far back skies without their own parallax sit, 0 on the stage, 1 at the horizon.");
             smooth = Config.Bind("VR", "SmoothMotion", true, "Draw moving things between the game's 60 Hz steps, so motion is smooth at any headset rate. Game speed does not change.");
             edgeMatch = Config.Bind("VR", "EdgeMatch", true, "Trim each eye's outer edge so both eyes see the same picture at the stage edges.");
@@ -133,6 +134,7 @@ namespace CupheadVR
                 Change = dir => { edgeMatch.Value = !edgeMatch.Value; PushSettings(); LogSettings(); },
                 Help = () => edgeMatch.Value ? "On: each eye's outer edge is trimmed, so both eyes see the same picture at the stage edges. The stage frame then floats at the depth of the nearest layer."
                                              : "Off: at the stage edges each eye sees a strip of picture the other does not, which can look odd with a lot of pop-out." });
+            depthTab.Rows.Add(Value("Lean parallax", lean, 0.1f, 0f, 1f, () => Pct(lean.Value), "How much leaning your head slides the layers against each other, like a real diorama. 0% keeps Cuphead lined up with the ground and his hits wherever your head is."));
             depthTab.Rows.Add(Value("Sky distance", skyDepth, 0.05f, 0f, 1f, () => Pct(skyDepth.Value), "How far back painted skies sit when the game gives them no layer of their own. 100% is the horizon."));
 
             var picture = new MenuUI.Tab { Name = "Picture" };
@@ -163,6 +165,7 @@ namespace CupheadVR
             depth.Value = DefaultDepth;
             popOut.Value = DefaultPopOut;
             characterPop.Value = DefaultPop;
+            lean.Value = 0f;
             skyDepth.Value = DefaultSky;
             sharpen.Value = DefaultSharpen;
             resolution.Value = 1f;
@@ -190,6 +193,7 @@ namespace CupheadVR
             rig.PopOut = popOut.Value;
             rig.SkyDepth = skyDepth.Value;
             rig.CharacterPop = characterPop.Value;
+            rig.LeanParallax = lean.Value;
             rig.Sharpen = sharpen.Value;
             rig.Sharpness = resolution.Value;
             rig.Smooth = smooth.Value;
@@ -228,6 +232,16 @@ namespace CupheadVR
             var a = arg.Split(' ');
             switch (line.Split(' ')[0])
             {
+                case "playerpos":
+                {
+                    var pl = PlayerManager.GetPlayer(PlayerId.PlayerOne);
+                    if (pl == null) { Log.LogInfo("PLAYERPOS none"); break; }
+                    var sb = new System.Text.StringBuilder("PLAYERPOS root " + pl.transform.position.ToString("F3"));
+                    foreach (var r in pl.GetComponentsInChildren<SpriteRenderer>(true))
+                        if (r.enabled && r.sprite != null) sb.Append(" | ").Append(r.name).Append(" local ").Append(r.transform.localPosition.ToString("F4"));
+                    Log.LogInfo(sb.ToString());
+                    break;
+                }
                 case "probe": probes.Probe(); Log.LogInfo("RIG active " + rig.Active + " " + rig.LayerSummary() + " menu " + menu.IsOpen); break;
                 case "dump": probes.Dump(arg.Length > 0 ? arg : "manual"); break;
                 case "autodump": autoDump.Value = arg == "1"; break;
@@ -244,6 +258,8 @@ namespace CupheadVR
                 case "stamp": rig.Stamp = arg == "1"; break;
                 case "depth": depth.Value = F(arg); PushSettings(); break;
                 case "pop": characterPop.Value = F(arg); PushSettings(); break;
+                case "fakehead": rig.LabHead = new Vector3(F(a[0]), F(a[1]), 0f); break;
+                case "lean": lean.Value = F(arg); PushSettings(); break;
                 case "popout": popOut.Value = F(arg); PushSettings(); break;
                 case "sky": skyDepth.Value = F(arg); PushSettings(); break;
                 case "grain": Grain.Value = F(arg); break;
@@ -257,6 +273,7 @@ namespace CupheadVR
                 case "edge": edgeMatch.Value = arg == "1"; PushSettings(); break;
                 case "smooth": smooth.Value = arg == "1"; PushSettings(); break;
                 case "even": rig.MeasureEven(int.Parse(arg, CultureInfo.InvariantCulture)); break;
+                case "teleport": { var pl = PlayerManager.GetPlayer(PlayerId.PlayerOne); if (pl != null) { pl.transform.position += new Vector3(F(a[0]), a.Length > 1 ? F(a[1]) : 0f, 0f); Log.LogInfo("TELEPORT player to " + pl.transform.position); } break; }
                 case "track": probes.Track(F(arg)); break;
                 default: Log.LogWarning("unknown command " + line); break;
             }
