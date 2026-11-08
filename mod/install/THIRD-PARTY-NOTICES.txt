@@ -12,6 +12,8 @@ OpenXR loader 1.1.65 (Khronos Group)
 The OpenXR side and the sharpening pass come from OriVR (MIT, scubasteve2365). The sharpening pass follows the idea of
 AMD FidelityFX Contrast Adaptive Sharpening (MIT licence); it is OriVR's own code, not a copy of AMD's.
 
+The Steady picture mode comes from OriVR, based on a contribution by junglejuz (OriVR pull request 2, MIT).
+
 The menu draws its text with the fonts the game itself has loaded. No font files are included.
 
 Cuphead belongs to Studio MDHR. This mod contains no game files.

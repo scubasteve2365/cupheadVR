@@ -222,3 +222,40 @@ transforms, the world camera and smoothed transforms are put back by localPositi
 Check on RigB (Forest Follies, game frozen, lab `fakehead` moving the head 10 cm right and 20 cm up): lean 0 gives a
 left eye pixel-identical to the centred head (0 of 7,290,000 differ); lean 100% (the 1.0 behaviour) changes 4,125,057
 pixels. Trim stays x 0.0234, y 0. Restore errors 0, drift 0.000 over the run.
+
+## 1.02: Picture setting, Auto / Steady / Panel (live on RigB, 2026-11-08)
+
+Standard for every mod (Steve, 2026-11-08). Steady sends the stage and the menu in one projection layer, drawn into each
+eye's full view at that frame's eye pose and FOV. Panel is the quads used since build 2. Ported from OriVR's picture-mode
+branch (2663a3a, based on PR 2 by junglejuz, MIT). Added for Cuphead: the menu is drawn the same way, and panel edges fade
+over one pixel. Falls back to quads if head tracking is invalid or the pass cannot be built.
+
+VDXR's runtime name is "VirtualDesktopXR 1.1.0" (Steve's Quest 3 log on 1.0, evidence/CupheadVR/2026-11-08). Auto lowercases
+the name, drops spaces, hyphens and underscores, and looks for "virtualdesktop" or "vdxr". The real match on VDXR is not
+verified yet: RigB only has SteamVR.
+
+Results, SteamVR 2.18.4 null driver, Root Pack, Steve's settings, evidence/CupheadVR/2026-11-08/v102:
+
+| Check | Result |
+|---|---|
+| Auto on SteamVR | PICTURE line: Auto, runtime "SteamVR/OpenXR", layer Panel (quad) |
+| picturetest | VirtualDesktopXR, VirtualDesktopXR 1.1.0, Virtual Desktop, VDXR give Steady; SteamVR, Oculus, WMR, Pimax, empty give Panel |
+| Live switching | 4 round trips, a LAYER line each way, no errors, about 144 fps both ways |
+| Stereo of Steady views, 1/3 size | dy 0 on 288 of 295 patches, dx median -56 (expected about -60 with pop-out 0.75 at 1.25 m) |
+| Eye check in Steady | 0 of 7,290,000; restore errors 0, drift 0 |
+| Menu in Steady | Upright in both eyes, on top of the stage (v102/headset_steady_menu.png, looked at) |
+| Eye images, frozen game | Panel and Steady eye images identical, 0 of 7,290,000 differ |
+
+Sharpness, frozen game, Laplacian detail: eye image 2.78, Steady view of the stage 1.75, eye image bilinear-resized to the
+same size 2.04. So Steady's own resample costs detail about like a bilinear resize. Panel also gets resampled by the
+compositor, which cannot be measured here, so this does not say which looks sharper in a headset. Stage covers 3552 of the
+4200 px view on the null driver, about 1:1 with the 3600 px eye image.
+
+Not verified: that Steady cures the shearing on Virtual Desktop; which mode looks better on Pimax.
+
+More 1.02 results: VR off then on in Steady rebuilt the swapchains, logged LAYER projection again, eye check 0 of 7,290,000.
+
+Lab trap, not a menu bug: the game stops running whenever its window loses focus. tools/vr_window_shot.py calls
+SetForegroundWindow on the compositor, and after it the mod read no more commands until a key press gave the game focus back
+(first looked like a hang with the menu open; the same menu steps without the capture ran fine). Behaviour is the same in
+1.01. If a player's window loses focus the game pauses and no new frames reach the headset. Not changed in 1.02.

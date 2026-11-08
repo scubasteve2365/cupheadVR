@@ -35,6 +35,7 @@ Depth tab
 - Sky distance: how far back painted skies sit.
 
 Picture tab
+- Picture: how the stage reaches the headset. Auto uses Steady on Virtual Desktop and Panel on everything else. Steady holds still when you turn your head on Virtual Desktop. Panel can look a little sharper.
 - Film grain and Colour fringe: the game's old film look. 0% is clean, 100% is how the game looks flat.
 - Sharpen: crisper line art. Too high makes edges glow.
 - Resolution: 100% matches your headset. Applies when the menu closes.
@@ -67,5 +68,5 @@ Notes
 - The game keeps its own 60 updates a second, so its speed is exactly the same as flat. Smooth motion draws the moving things in between.
 - Settings are saved in BepInEx\config\com.scubasteve2365.cupheadvr.cfg in the game folder.
 
-Version 1.01. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
+Version 1.02. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
 This is a fan mod, not made or approved by Studio MDHR.

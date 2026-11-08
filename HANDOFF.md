@@ -4,29 +4,27 @@ Updated 2026-11-08 (RigB).
 
 ## Where things stand
 
-1.01 is the public release (GitHub v1.01, latest). Native stereo on a room-fixed stage, depth from the game's parallax
-speeds, smooth motion at headset rate, edge match, Cuphead-card menu. Details and evidence are in RE_NOTES.md.
-Steve tested 1.0 on Pimax Dream Air (SteamVR) and Quest 3 (Virtual Desktop). 1.01 on RigB only, plus release by Steve's go-ahead.
+1.01 is the public release (GitHub v1.01, latest). 1.02 is on RigA for Steve's comparison, local commits only, not published.
+1.02 adds the Picture setting (Auto, Steady, Panel; RE_NOTES has the results). Steve tested 1.0 on Pimax Dream Air (SteamVR) and
+Quest 3 (Virtual Desktop). 1.01 and 1.02 tested on RigB only.
 
 | File | sha256 starts |
 |---|---|
-| build/CupheadVR.dll | f3b7f8d0806f508f |
-| build/CupheadVRNative.dll | 4de01299ffea4d1f |
+| build/CupheadVR.dll | cf669e61f91dd82d |
+| build/CupheadVRNative.dll | 1b2711e371dcf305 |
 | build/openxr_loader.dll (Khronos 1.1.65 x64) | b0d0eed4e2b6aeb3 |
+| build/package/CupheadVR-1.02.zip | 7227d36e43a6cc52 |
 
 The repo is public: test work stays in local commits, and nothing is pushed without Steve's OK.
 
-## Planned: Picture setting, Auto / Steady / Panel (standard for every mod, Steve 2026-11-08)
+## For Steve to test in the headset
 
-Not started. Today every flat thing is a quad: the stage (one quad per eye, CopyEye in mod/native/CupheadVRNative.cpp) and
-the menu (CopyMenu). The HUD is inside the stage image. The black backdrop is already a projection layer.
-Auto: projection on Virtual Desktop, quad elsewhere. VDXR reports its runtime as "VirtualDesktopXR 1.1.0" (no space, Steve's
-Quest 3 log, 2026-11-08), so the match must be on "virtualdesktop" or "vdxr", not "Virtual Desktop".
-Work: full-view swapchain per eye in place of the 16x16 backdrop, a native pass that draws each eye's stage image and the
-menu at their room poses with that frame's eye pose and FOV, smoothed edges, the menu row, and the runtime and layer log lines.
+On Quest 3 through Virtual Desktop: the Picture row should read Auto (Steady); turn your head and check the stage and menu hold still.
+On the Pimax: Auto (Panel). Compare Steady and Panel for sharpness and steadiness.
 
 ## Open questions
 
 1. Strict zero-difference against the back buffer (0.2% of pixels off by 1).
 2. Game speed is by construction (1/60 fixed step kept); 72, 90 and 120 Hz not run on RigB (null driver is 144 only).
 3. Local co-op not tested.
+4. The game pauses when its window loses focus (RE_NOTES, 1.02). Unchanged; ask Steve whether to keep it running.
