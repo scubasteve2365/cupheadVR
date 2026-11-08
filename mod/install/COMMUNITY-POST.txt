@@ -16,7 +16,7 @@ Cuphead on a stage floating in front of you, in true native stereo: both eyes ar
 - A gamepad
 
 **Please read**
-- Tested in a real headset on a Pimax Dream Air through SteamVR. Other headsets and graphics cards should work but have not been tried. Reports are welcome.
+- Tested in real headsets on two setups: Pimax Dream Air through SteamVR, and Meta Quest 3 through Virtual Desktop's VDXR. Other headsets and graphics cards should work but have not been tried. Reports are welcome.
 - The overworld map stays flat on the stage, because its art has no depth layers.
 - The mod is not signed, so Windows may warn you, and Smart App Control can block it. The README covers this.
 

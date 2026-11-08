@@ -53,7 +53,7 @@ If something goes wrong
 - Far backgrounds strain your eyes: lower Layer depth, Sky distance or Pop-out.
 
 Tested on
-Pimax Dream Air through SteamVR with an RTX 5090. Others should work through OpenXR but have not been tried. AMD and Intel graphics have not been tried.
+Pimax Dream Air through SteamVR, and Meta Quest 3 through Virtual Desktop's VDXR, both with an RTX 5090. Others should work through OpenXR but have not been tried. AMD and Intel graphics have not been tried.
 
 Known limits
 - Steam version only.
