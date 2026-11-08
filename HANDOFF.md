@@ -1,39 +1,32 @@
 # CupheadVR handoff
 
-Updated 2026-11-07 (RigB).
+Updated 2026-11-08 (RigB).
 
 ## Where things stand
 
-Build 3 (on RigA 2026-11-07, CupheadVR.dll sha256 dd87e3c1...f509f): build 2 plus smooth motion. Build 2: the game on a stage in the headset, native stereo (both eyes from one tick), depth from the game's own
-parallax speeds, head tracked, black surround, in-headset menu. Details and evidence in RE_NOTES.md.
+1.01 is the public release (GitHub v1.01, latest). Native stereo on a room-fixed stage, depth from the game's parallax
+speeds, smooth motion at headset rate, edge match, Cuphead-card menu. Details and evidence are in RE_NOTES.md.
+Steve tested 1.0 on Pimax Dream Air (SteamVR) and Quest 3 (Virtual Desktop). 1.01 on RigB only, plus release by Steve's go-ahead.
 
-| File | sha256 |
+| File | sha256 starts |
 |---|---|
-| build\CupheadVR.dll | 7200e1b0f9a244ec79168fc90610206e425d1a036d53c45c358e96396b5c75ea |
-| build\CupheadVRNative.dll | ffc2501c3da900bb847ff6ebb33709b5017f11b6d949d2ea3732acb6207b0cf3 |
-| build\openxr_loader.dll (Khronos 1.1.65 x64) | b0d0eed4e2b6aeb3ce529d82daf3daa5db104857d65c872884b4661142366ce2 |
+| build/CupheadVR.dll | f3b7f8d0806f508f |
+| build/CupheadVRNative.dll | 4de01299ffea4d1f |
+| build/openxr_loader.dll (Khronos 1.1.65 x64) | b0d0eed4e2b6aeb3 |
 
-The RigA hand-off also carries BepInEx 5.4.23.6 x64 (winhttp.dll, doorstop files, BepInEx\core).
+The repo is public: test work stays in local commits, and nothing is pushed without Steve's OK.
 
-Menu: hold both sticks 0.5 s, or F1. Rows: Stage distance, Stage size, Depth, Pop-out, Sky distance, Sharpen,
-Resolution, Recenter, Reset to defaults, Close. Defaults: 1.85 m wide at 1.0 m, depth 100%, sky 85%, sharpen 30%.
+## Planned: Picture setting, Auto / Steady / Panel (standard for every mod, Steve 2026-11-08)
 
-## Lab commands (vrlab_command.txt, Lab.Commands on in RigB's BepInEx\config)
-
-`probe`, `dump <tag>`, `zerodiff <tag>`, `stereo <sep> <tag>`, `slot <n>`, `level <Levels name>`, `scene <Scenes name>`,
-`vr on|off`, `xrshot`, `eyecheck`, `xrdump`, `stamp 0|1`, `depth`, `popout`, `sky`, `sharpen`, `stage <w> <d>`,
-`recenter`, `menu` (toggle) and `menu up|down|left|right|a|b`, `match 0|1`, `track <s>`, `timescale`.
-To the overworld: `py -3.12 C:\VRLab\games\CupheadVR\to_game.py 2`. Lab.BlockSaves is on in RigB's config.
+Not started. Today every flat thing is a quad: the stage (one quad per eye, CopyEye in mod/native/CupheadVRNative.cpp) and
+the menu (CopyMenu). The HUD is inside the stage image. The black backdrop is already a projection layer.
+Auto: projection on Virtual Desktop, quad elsewhere. VDXR reports its runtime as "VirtualDesktopXR 1.1.0" (no space, Steve's
+Quest 3 log, 2026-11-08), so the match must be on "virtualdesktop" or "vdxr", not "Virtual Desktop".
+Work: full-view swapchain per eye in place of the 16x16 backdrop, a native pass that draws each eye's stage image and the
+menu at their room poses with that frame's eye pose and FOV, smoothed edges, the menu row, and the runtime and layer log lines.
 
 ## Open questions
 
-1. Motion smoothness: build 3 draws moving things between the 60 Hz game steps (RE_NOTES, Build 3). Waiting for Steve.
-   `match 1` (needs a way to drive the player in the lab: the virtual pad joins as Player 2).
-2. Overworld: front facing, flat for now (Steve, 2026-11-07: not tilted, like Ori). No depth there yet.
-3. Root Pack style skies: pushed back by default (Sky distance), waiting for Steve's view.
-4. Strict zero-difference against the back buffer (0.2% of pixels off by 1).
-5. HUD: on the stage (HP card), as agreed for diorama games.
-
-## For Steve to test in the headset
-
-See the thread message for build 2.
+1. Strict zero-difference against the back buffer (0.2% of pixels off by 1).
+2. Game speed is by construction (1/60 fixed step kept); 72, 90 and 120 Hz not run on RigB (null driver is 144 only).
+3. Local co-op not tested.
