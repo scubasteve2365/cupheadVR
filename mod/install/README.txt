@@ -30,6 +30,7 @@ Depth tab
 - Layer depth: how far apart the background layers spread. Higher never goes past the horizon.
 - Character pop: lifts Cuphead, enemies, bullets and effects off the ground, like cut-outs.
 - Pop-out: brings the whole scene toward you.
+- Lean parallax: how much leaning your head slides the layers against each other, like a real diorama. 0% (the default) keeps Cuphead lined up with his ground wherever your head is.
 - Edge match: trims each eye's outer edge so both eyes see the same picture at the stage edges. Leave it on.
 - Sky distance: how far back painted skies sit.
 
