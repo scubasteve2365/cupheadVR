@@ -49,6 +49,8 @@ namespace CupheadVR
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int BeginFrameFn(out FrameInfo info, IntPtr left, IntPtr right);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int PopLogFn(StringBuilder buffer, int size);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SetMenuFn(IntPtr tex, float cx, float cy, float cz, float width, float height, float qy, float qw);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SetLayerModeFn(int mode);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void RuntimeInfoFn(StringBuilder runtime, int runtimeSize, StringBuilder system, int systemSize);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void StatsFn(out uint frames, out uint layers, out uint skipped);
 
         GetRenderEventFn xGetRenderEvent;
@@ -63,6 +65,9 @@ namespace CupheadVR
         PopLogFn xPopLog;
         StatsFn xStats;
         SetMenuFn xSetMenu;
+        SetLayerModeFn xSetLayerMode;
+        StateFn xActiveLayer;
+        RuntimeInfoFn xRuntimeInfo;
 
         static T Fn<T>(IntPtr module, string name) where T : class
         {
@@ -77,6 +82,47 @@ namespace CupheadVR
         internal float PopOut;            // 0 keeps the play plane on the stage; higher brings everything toward you
         internal float SkyDepth = 0.85f;
         internal float CharacterPop = 1.0f;
+        internal int PictureMode;  // 0 Auto, 1 Steady (projection layer), 2 Panel (quad layers)
+        internal string RuntimeName = "", HeadsetName = "";
+        bool runtimeRead;
+
+        // Steve's rule for every mod: projection for Virtual Desktop, quad for every other runtime. VDXR reports itself as
+        // "VirtualDesktopXR 1.1.0" (Steve's Quest 3 log, 2026-11-08). The match is loose because names change between versions.
+        internal static bool AutoPicksSteady(string runtime)
+        {
+            string name = (runtime ?? "").ToLowerInvariant().Replace(" ", "").Replace("-", "").Replace("_", "");
+            return name.IndexOf("virtualdesktop", StringComparison.Ordinal) >= 0 || name.IndexOf("vdxr", StringComparison.Ordinal) >= 0;
+        }
+
+        internal bool WantSteady { get { return PictureMode == 1 || (PictureMode == 0 && AutoPicksSteady(RuntimeName)); } }
+
+        // What the headset is really being sent right now, for the menu.
+        internal string ActiveLayerName
+        {
+            get
+            {
+                int a = xActiveLayer != null ? xActiveLayer() : -1;
+                return a == 1 ? "Steady" : a == 0 ? "Panel" : (active ? (WantSteady ? "Steady" : "Panel") : "not running");
+            }
+        }
+
+        internal void LogPicture()
+        {
+            string mode = PictureMode == 1 ? "Steady" : PictureMode == 2 ? "Panel" : "Auto";
+            Plugin.Log.LogInfo(string.Format("PICTURE setting {0}, runtime \"{1}\", headset \"{2}\", layer {3}", mode, RuntimeName, HeadsetName, WantSteady ? "Steady (projection)" : "Panel (quad)"));
+        }
+
+        void ReadRuntime()
+        {
+            var runtime = new StringBuilder(128);
+            var headset = new StringBuilder(256);
+            xRuntimeInfo(runtime, runtime.Capacity, headset, headset.Capacity);
+            RuntimeName = runtime.ToString();
+            HeadsetName = headset.ToString();
+            runtimeRead = true;
+            LogPicture();
+        }
+
         internal float LeanParallax;
         internal Vector3 LabHead;  // lab: pretend the head moved this far from the recenter point (metres)  // 0: head movement does not move the layers against each other, 1: full  // play-plane layering by the game's sorting layers, 1 = default spread  // depth given to skies and scrolling clouds that have no parallax speed of their own
         internal float Sharpen = 0.3f;
@@ -127,6 +173,9 @@ namespace CupheadVR
             xPopLog = Fn<PopLogFn>(module, "CupXR_PopLog");
             xStats = Fn<StatsFn>(module, "CupXR_Stats");
             xSetMenu = Fn<SetMenuFn>(module, "CupXR_SetMenu");
+            xSetLayerMode = Fn<SetLayerModeFn>(module, "CupXR_SetLayerMode");
+            xActiveLayer = Fn<StateFn>(module, "CupXR_ActiveLayer");
+            xRuntimeInfo = Fn<RuntimeInfoFn>(module, "CupXR_RuntimeInfo");
             renderEvent = xGetRenderEvent();
             nativeLoaded = true;
             return true;
@@ -335,6 +384,8 @@ namespace CupheadVR
                     if (!eyeRender[i].IsCreated()) eyeRender[i].Create();
                     if (!eyeOut[i].IsCreated()) eyeOut[i].Create();
                 }
+                if (!runtimeRead) ReadRuntime();
+                xSetLayerMode(WantSteady ? 1 : 0);
                 PushMenu();
                 FrameInfo info;
                 if (xBeginFrame(out info, eyeOut[0].GetNativeTexturePtr(), eyeOut[1].GetNativeTexturePtr()) == 0) continue;

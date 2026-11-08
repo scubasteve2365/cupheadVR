@@ -12,10 +12,10 @@ namespace CupheadVR
     // CupheadVR 1.0: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
     // layers, smooth motion at any headset rate, and an in-headset menu (hold both sticks). VR starts by itself unless
     // VR.AutoStart is off; if OpenXR cannot start, the game stays flat. Lab probes stay available behind Lab.Commands.
-    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.1")]
+    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.2")]
     public class Plugin : BaseUnityPlugin
     {
-        internal const string Version = "1.01";
+        internal const string Version = "1.02";
         internal static BepInEx.Logging.ManualLogSource Log;
         internal static ConfigEntry<bool> BlockSaves;
         internal static ConfigEntry<float> Grain, Fringe;
@@ -29,6 +29,7 @@ namespace CupheadVR
         ConfigEntry<bool> labCommands, autoDump, autoStart, smooth, edgeMatch;
         ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution, characterPop, lean;
         ConfigEntry<int> clickVolume;
+        ConfigEntry<string> picture;
         string commandFile;
         int nextCommandCheck;
         float dumpAt = -1f;
@@ -58,6 +59,7 @@ namespace CupheadVR
             resolution = Config.Bind("VR", "ResolutionScale", 1.0f, "1 matches the headset's pixel density across the stage.");
             Grain = Config.Bind("Picture", "FilmGrain", DefaultGrain, "Film grain and scratches, 1 is the game's own amount, 0 is off.");
             Fringe = Config.Bind("Picture", "ColorFringe", DefaultFringe, "The game's colour fringing at the edges, 1 is the game's own amount, 0 is off.");
+            picture = Config.Bind("Picture", "Picture", "Auto", "How the stage reaches the headset: Auto, Steady or Panel. Auto uses Steady on Virtual Desktop and Panel on everything else.");
             clickVolume = Config.Bind("Menu", "ClickVolume", 2, "Menu click sounds: 0 off, 1 low, 2 medium, 3 high.");
             commandFile = Path.Combine(Paths.GameRootPath, "vrlab_command.txt");
             OutDir = Path.Combine(Paths.GameRootPath, "vrlab_dumps");
@@ -137,12 +139,13 @@ namespace CupheadVR
             depthTab.Rows.Add(Value("Lean parallax", lean, 0.1f, 0f, 1f, () => Pct(lean.Value), "How much leaning your head slides the layers against each other, like a real diorama. 0% keeps Cuphead lined up with the ground and his hits wherever your head is."));
             depthTab.Rows.Add(Value("Sky distance", skyDepth, 0.05f, 0f, 1f, () => Pct(skyDepth.Value), "How far back painted skies sit when the game gives them no layer of their own. 100% is the horizon."));
 
-            var picture = new MenuUI.Tab { Name = "Picture" };
-            picture.Rows.Add(Value("Film grain", Grain, 0.1f, 0f, 1.5f, () => Pct(Grain.Value), "The old film grain, dust and scratches. 100% is how the game looks. Lower is cleaner in the headset."));
-            picture.Rows.Add(Value("Colour fringe", Fringe, 0.1f, 0f, 1.5f, () => Pct(Fringe.Value), "The red and blue fringes the game adds around the picture's edges. 100% is how the game looks."));
-            picture.Rows.Add(Value("Sharpen", sharpen, 0.1f, 0f, 1f, () => Pct(sharpen.Value), "Crisper line art. Too high makes edges glow."));
-            picture.Rows.Add(Value("Resolution", resolution, 0.1f, 0.5f, 1.5f, () => Pct(resolution.Value) + "  (" + rig.WantedWidth() + " px)", "100% matches your headset's sharpness across the stage. The new size takes effect when the menu closes."));
-            picture.Rows.Add(new MenuUI.Row { Label = "Smooth motion", Value = () => smooth.Value ? "On" : "Off",
+            var pictureTab = new MenuUI.Tab { Name = "Picture" };
+            pictureTab.Rows.Add(new MenuUI.Row { Label = "Picture", Value = PictureText, Change = CyclePicture, Help = PictureHelp });
+            pictureTab.Rows.Add(Value("Film grain", Grain, 0.1f, 0f, 1.5f, () => Pct(Grain.Value), "The old film grain, dust and scratches. 100% is how the game looks. Lower is cleaner in the headset."));
+            pictureTab.Rows.Add(Value("Colour fringe", Fringe, 0.1f, 0f, 1.5f, () => Pct(Fringe.Value), "The red and blue fringes the game adds around the picture's edges. 100% is how the game looks."));
+            pictureTab.Rows.Add(Value("Sharpen", sharpen, 0.1f, 0f, 1f, () => Pct(sharpen.Value), "Crisper line art. Too high makes edges glow."));
+            pictureTab.Rows.Add(Value("Resolution", resolution, 0.1f, 0.5f, 1.5f, () => Pct(resolution.Value) + "  (" + rig.WantedWidth() + " px)", "100% matches your headset's sharpness across the stage. The new size takes effect when the menu closes."));
+            pictureTab.Rows.Add(new MenuUI.Row { Label = "Smooth motion", Value = () => smooth.Value ? "On" : "Off",
                 Change = dir => { smooth.Value = !smooth.Value; PushSettings(); LogSettings(); },
                 Help = () => smooth.Value ? "On: things move smoothly at your headset's refresh rate. The game itself still runs at its normal speed."
                                           : "Off: things move in the game's own 60 steps a second, which can look juddery above 60 Hz." });
@@ -154,8 +157,30 @@ namespace CupheadVR
             options.Rows.Add(new MenuUI.Row { Label = "Close", Press = () => menu.Close(), Help = () => "Close the menu. B or holding both sticks also closes it." });
             menu.Tabs.Add(stage);
             menu.Tabs.Add(depthTab);
-            menu.Tabs.Add(picture);
+            menu.Tabs.Add(pictureTab);
             menu.Tabs.Add(options);
+        }
+
+        static int PictureCode(string value) { return value == "Steady" ? 1 : value == "Panel" ? 2 : 0; }
+
+        string PictureText()
+        {
+            return picture.Value == "Steady" || picture.Value == "Panel" ? picture.Value : "Auto (" + rig.ActiveLayerName + ")";
+        }
+
+        string PictureHelp()
+        {
+            return "Auto uses Steady on Virtual Desktop and Panel on everything else. Steady holds still when you turn your head on Virtual Desktop. Panel can look a little sharper."
+                 + (rig.RuntimeName.Length > 0 ? " Detected: " + rig.RuntimeName + "." : "");
+        }
+
+        void CyclePicture(int dir)
+        {
+            var order = new[] { "Auto", "Steady", "Panel" };
+            int i = Math.Max(0, Array.IndexOf(order, picture.Value));
+            picture.Value = order[(i + dir + order.Length) % order.Length];
+            PushSettings();
+            rig.LogPicture();
         }
 
         void ResetAll()
@@ -171,6 +196,7 @@ namespace CupheadVR
             resolution.Value = 1f;
             smooth.Value = true;
             edgeMatch.Value = true;
+            picture.Value = "Auto";
             Grain.Value = DefaultGrain;
             Fringe.Value = DefaultFringe;
             clickVolume.Value = 2;
@@ -197,6 +223,7 @@ namespace CupheadVR
             rig.Sharpen = sharpen.Value;
             rig.Sharpness = resolution.Value;
             rig.Smooth = smooth.Value;
+            rig.PictureMode = PictureCode(picture.Value);
             rig.EdgeTrim = edgeMatch.Value;
             rig.ApplyStage();
             menu.Refresh();
@@ -274,6 +301,15 @@ namespace CupheadVR
                 case "smooth": smooth.Value = arg == "1"; PushSettings(); break;
                 case "even": rig.MeasureEven(int.Parse(arg, CultureInfo.InvariantCulture)); break;
                 case "teleport": { var pl = PlayerManager.GetPlayer(PlayerId.PlayerOne); if (pl != null) { pl.transform.position += new Vector3(F(a[0]), a.Length > 1 ? F(a[1]) : 0f, 0f); Log.LogInfo("TELEPORT player to " + pl.transform.position); } break; }
+                case "picture":
+                    picture.Value = arg == "steady" ? "Steady" : arg == "panel" ? "Panel" : "Auto";
+                    PushSettings();
+                    rig.LogPicture();
+                    break;
+                case "picturetest":
+                    foreach (var name in new[] { "SteamVR/OpenXR", "VirtualDesktopXR", "VirtualDesktopXR 1.1.0", "Virtual Desktop", "VDXR", "Oculus", "Windows Mixed Reality Runtime", "Pimax", "" })
+                        Log.LogInfo("PICTURETEST runtime \"" + name + "\": auto picks " + (XrRig.AutoPicksSteady(name) ? "Steady" : "Panel"));
+                    break;
                 case "track": probes.Track(F(arg)); break;
                 default: Log.LogWarning("unknown command " + line); break;
             }

@@ -1,6 +1,8 @@
 // CupheadVRNative: the OpenXR side of CupheadVR. 64-bit, loaded into the game by the C# plugin.
 // Ported from OriVRNative (OriVR, MIT, scubasteve2365). Added for Cuphead: a black backdrop behind the stage so no
 // runtime home shows around it, and the runtime's recenter event passed to the plugin.
+// The Steady picture (stage and menu drawn into a projection layer) comes from OriVR's picture-mode branch, based on
+// PR #2 by junglejuz (MIT). Added here: the menu drawn the same way, and smoothed panel edges.
 //
 // Threads:
 //   Main thread   CupXR_BeginFrame: poll events, xrWaitFrame (paces the game), xrLocateViews.
@@ -12,6 +14,7 @@
 #include <windows.h>
 #include <d3d11_1.h>
 #include <d3dcompiler.h>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -95,6 +98,22 @@ static unsigned long long g_submitted, g_submittedLayers, g_skippedAcquire;
 
 struct Swap { XrSwapchain handle; std::vector<XrSwapchainImageD3D11KHR> images; };
 static Swap g_swap[2];
+// Steady picture: the stage and menu drawn into each eye's full view, sent as one projection layer.
+static pD3DCompile g_compile;
+static volatile LONG g_layerMode = 0;     // 1 = projection layer drawn in the eyes, 0 = quads
+static volatile LONG g_activeLayer = -1;  // what the last rendered frame really used: 1 projection, 0 quads, -1 none yet
+static int g_projState;                   // 0 not tried yet, 1 ready, -1 failed. Built on first use.
+static char g_runtimeName[128], g_systemName[256];
+static LONG g_loggedMode = -1;
+static ID3D11VertexShader* g_stageVs;
+static ID3D11PixelShader* g_stagePs;
+static ID3D11Buffer* g_stageCb;
+static ID3D11SamplerState* g_linear;
+static ID3D11RasterizerState* g_noCull;
+static ID3D11BlendState* g_stageBlend;
+static Swap g_proj[2];
+static std::vector<ID3D11RenderTargetView*> g_projRtv[2];
+static int g_projW, g_projH;
 static Swap g_menuSwap;                      // the mod menu's own quad layer, both eyes, on top of everything
 static int g_menuW, g_menuH;
 static std::mutex g_menuLock;
@@ -161,6 +180,7 @@ static bool CreateSharpenPass() {
     HMODULE compilerDll = LoadLibraryA("d3dcompiler_47.dll");
     if (!compilerDll) { Log("sharpen off: no d3dcompiler_47.dll"); return false; }
     auto compile = (pD3DCompile)GetProcAddress(compilerDll, "D3DCompile");
+    g_compile = compile;
     if (!compile) return false;
     ID3DBlob* vsBlob = nullptr; ID3DBlob* psBlob = nullptr; ID3DBlob* err = nullptr;
     size_t len = strlen(g_shader);
@@ -205,7 +225,7 @@ static void CreatePassTargets() {
         td.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
         td.SampleDesc.Count = 1;
         td.Usage = D3D11_USAGE_DEFAULT;
-        td.BindFlags = D3D11_BIND_RENDER_TARGET;
+        td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;  // the Steady pass samples it
         if (FAILED(g_dev->CreateTexture2D(&td, nullptr, &g_passTex[e]))) continue;
         D3D11_RENDER_TARGET_VIEW_DESC rv{};
         rv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -249,7 +269,7 @@ static ID3D11Texture2D* Sharpen(int e, ID3D11Texture2D* src) {
 }
 
 // Lab: writes the exact pixels going to the headset as a BMP, so the sharpen pass can be measured.
-static void DumpImage(int e, ID3D11Texture2D* tex) {
+static void DumpImage(const char* tag, int e, ID3D11Texture2D* tex) {
     D3D11_TEXTURE2D_DESC td;
     tex->GetDesc(&td);
     td.Usage = D3D11_USAGE_STAGING;
@@ -262,7 +282,7 @@ static void DumpImage(int e, ID3D11Texture2D* tex) {
     D3D11_MAPPED_SUBRESOURCE map;
     if (SUCCEEDED(g_ctx->Map(staging, 0, D3D11_MAP_READ, 0, &map))) {
         char path[MAX_PATH + 16];
-        sprintf_s(path, "%s_%d.bmp", g_dumpPath, e);
+        sprintf_s(path, "%s%s_%d.bmp", g_dumpPath, tag, e);
         FILE* f = nullptr;
         if (fopen_s(&f, path, "wb") == 0 && f) {
             BITMAPFILEHEADER fh{};
@@ -342,6 +362,206 @@ static bool CreateSwapchains() {
         }
     }
     CreatePassTargets();
+    return true;
+}
+
+// Draws a picture as a rectangle given by four clip-space corners (top left, top right, bottom left, bottom right). The
+// hardware interpolates the texture coordinates with perspective, so the picture lies flat in the room. The outermost
+// pixel fades out so the panel's edge does not stair-step (a compositor does this for a quad).
+static const char* g_stageShader = R"(
+Texture2D src : register(t0);
+SamplerState linearClamp : register(s0);
+cbuffer Stage : register(b0) { float4 corner[4]; };
+void vs(uint id : SV_VertexID, out float4 pos : SV_Position, out float2 uv : TEXCOORD0) {
+    uv = float2(id & 1, id >> 1);
+    pos = corner[id];
+}
+float4 ps(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
+    float2 edge = min(uv, 1 - uv) / max(fwidth(uv), 0.000001);
+    return float4(src.Sample(linearClamp, uv).rgb, saturate(min(edge.x, edge.y)));
+}
+)";
+
+static bool CreateStagePass() {
+    if (g_stageVs) return true;  // kept across VR off and on
+    if (!g_compile || !g_passState) { Log("Steady picture off: no shader compiler or context state, quads are used"); return false; }
+    ID3DBlob* vsBlob = nullptr; ID3DBlob* psBlob = nullptr; ID3DBlob* err = nullptr;
+    size_t len = strlen(g_stageShader);
+    if (FAILED(g_compile(g_stageShader, len, "stage", nullptr, nullptr, "vs", "vs_5_0", 0, 0, &vsBlob, &err)) ||
+        FAILED(g_compile(g_stageShader, len, "stage", nullptr, nullptr, "ps", "ps_5_0", 0, 0, &psBlob, &err))) {
+        Log("Steady picture off: shader error %s", err ? (const char*)err->GetBufferPointer() : "unknown");
+        return false;
+    }
+    g_dev->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &g_stageVs);
+    g_dev->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &g_stagePs);
+    D3D11_BUFFER_DESC cb{};
+    cb.ByteWidth = 64;
+    cb.Usage = D3D11_USAGE_DEFAULT;
+    cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    g_dev->CreateBuffer(&cb, nullptr, &g_stageCb);
+    D3D11_SAMPLER_DESC sd{};
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.MaxLOD = D3D11_FLOAT32_MAX;
+    g_dev->CreateSamplerState(&sd, &g_linear);
+    D3D11_RASTERIZER_DESC rd{};
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.CullMode = D3D11_CULL_NONE;
+    rd.DepthClipEnable = TRUE;
+    g_dev->CreateRasterizerState(&rd, &g_noCull);
+    D3D11_BLEND_DESC bd{};
+    bd.RenderTarget[0].BlendEnable = TRUE;
+    bd.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    bd.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    bd.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+    bd.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    g_dev->CreateBlendState(&bd, &g_stageBlend);
+    return g_stageVs && g_stagePs && g_stageCb && g_linear && g_noCull && g_stageBlend;
+}
+
+static bool CreateProjectionSwapchains() {
+    if (g_recW <= 0 || g_recH <= 0) { Log("Steady picture off: the runtime gave no eye size, quads are used"); return false; }
+    g_projW = g_recW;
+    g_projH = g_recH;
+    for (int e = 0; e < 2; e++) {
+        XrSwapchainCreateInfo c{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        c.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+        c.format = g_format;
+        c.sampleCount = 1;
+        c.width = g_projW;
+        c.height = g_projH;
+        c.faceCount = c.arraySize = c.mipCount = 1;
+        XRCHECK(p_createSwap(g_sess, &c, &g_proj[e].handle));
+        uint32_t ic = 0;
+        XRCHECK(p_enumImages(g_proj[e].handle, 0, &ic, nullptr));
+        g_proj[e].images.assign(ic, XrSwapchainImageD3D11KHR{XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
+        XRCHECK(p_enumImages(g_proj[e].handle, ic, &ic, (XrSwapchainImageBaseHeader*)g_proj[e].images.data()));
+        g_projRtv[e].assign(ic, nullptr);
+    }
+    Log("Steady picture ready: eye views %dx%d, %zu images per eye", g_projW, g_projH, g_proj[0].images.size());
+    return true;
+}
+
+static bool EnsureProjection() {
+    if (g_projState == 0) {
+        g_projState = (CreateStagePass() && CreateProjectionSwapchains()) ? 1 : -1;
+        if (g_projState < 0) g_projW = 0;
+    }
+    return g_projState == 1;
+}
+
+struct V3 { float x, y, z; };
+static V3 Rotate(const XrQuaternionf& q, V3 v) {
+    V3 t{2 * (q.y * v.z - q.z * v.y), 2 * (q.z * v.x - q.x * v.z), 2 * (q.x * v.y - q.y * v.x)};
+    return {v.x + q.w * t.x + (q.y * t.z - q.z * t.y), v.y + q.w * t.y + (q.z * t.x - q.x * t.z), v.z + q.w * t.z + (q.x * t.y - q.y * t.x)};
+}
+
+// A panel's four corners in the eye's clip space. pose: centre x, y, z, width, height, turn as quaternion y, w.
+static void PanelCorners(const float* pose, const XrPosef& eye, const XrFovf& fov, float out[16]) {
+    XrQuaternionf turn{0, pose[5], 0, pose[6]};
+    XrQuaternionf inv{-eye.orientation.x, -eye.orientation.y, -eye.orientation.z, eye.orientation.w};
+    float hw = pose[3] * 0.5f, hh = pose[4] * 0.5f;
+    const V3 local[4] = {{-hw, hh, 0}, {hw, hh, 0}, {-hw, -hh, 0}, {hw, -hh, 0}};
+    float l = tanf(fov.angleLeft), r = tanf(fov.angleRight), u = tanf(fov.angleUp), d = tanf(fov.angleDown);
+    const float n = 0.05f, f = 100.0f;
+    for (int i = 0; i < 4; i++) {
+        V3 w = Rotate(turn, local[i]);
+        V3 rel{pose[0] + w.x - eye.position.x, pose[1] + w.y - eye.position.y, pose[2] + w.z - eye.position.z};
+        V3 v = Rotate(inv, rel);  // eye space: x right, y up, looking down -z
+        out[i * 4 + 0] = (2 * v.x + (l + r) * v.z) / (r - l);
+        out[i * 4 + 1] = (2 * v.y + (u + d) * v.z) / (u - d);
+        out[i * 4 + 2] = (f / (f - n)) * -v.z - f * n / (f - n);
+        out[i * 4 + 3] = -v.z;
+    }
+}
+
+static bool DrawPanel(ID3D11Texture2D* tex, const float* pose, const XrPosef& eye, const XrFovf& fov, bool srgb) {
+    D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.Format = srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+    sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    sv.Texture2D.MipLevels = 1;
+    ID3D11ShaderResourceView* srv = nullptr;
+    if (FAILED(g_dev->CreateShaderResourceView(tex, &sv, &srv))) return false;
+    float corners[16];
+    PanelCorners(pose, eye, fov, corners);
+    g_ctx->UpdateSubresource(g_stageCb, 0, nullptr, corners, 0, 0);
+    g_ctx->PSSetShaderResources(0, 1, &srv);
+    g_ctx->Draw(4, 0);
+    ID3D11ShaderResourceView* noSrv = nullptr;
+    g_ctx->PSSetShaderResources(0, 1, &noSrv);
+    srv->Release();
+    return true;
+}
+
+// Draws this eye's stage image, then the menu if open, into the eye's full view. The pose and lens are the ones this
+// frame was rendered for, so the runtime's correction for late head motion matches the picture.
+static bool DrawEye(int e, ID3D11Texture2D* src, const PendingFrame& f, XrCompositionLayerProjectionView& view) {
+    D3D11_TEXTURE2D_DESC td;
+    if (!src) { Log("eye %d has no texture this frame", e); return false; }
+    src->GetDesc(&td);
+    if ((int)td.Width != g_w || (int)td.Height != g_h) { Log("eye %d texture is %ux%u, expected %dx%d", e, td.Width, td.Height, g_w, g_h); return false; }
+    uint32_t idx = 0;
+    XrResult r = p_acquire(g_proj[e].handle, nullptr, &idx);
+    if (XR_FAILED(r)) { Log("acquire failed: %d", (int)r); return false; }
+    XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    wi.timeout = 100000000;  // 100 ms
+    r = p_waitImage(g_proj[e].handle, &wi);
+    if (r != XR_SUCCESS) { Log("wait image: %d", (int)r); if (XR_FAILED(r)) { p_release(g_proj[e].handle, nullptr); return false; } }
+
+    ID3D11Texture2D* image = Sharpen(e, src);
+    bool srgb = g_format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    ID3D11RenderTargetView*& rtv = g_projRtv[e][idx];
+    if (!rtv) {
+        D3D11_RENDER_TARGET_VIEW_DESC rv{};
+        rv.Format = srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+        rv.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+        HRESULT hr = g_dev->CreateRenderTargetView(g_proj[e].images[idx].texture, &rv, &rtv);
+        if (FAILED(hr)) Log("eye %d view target failed: %08lx", e, (unsigned long)hr);
+    }
+    bool ok = rtv != nullptr;
+    if (ok) {
+        ID3DDeviceContextState* unityState = nullptr;
+        g_ctx1->SwapDeviceContextState(g_passState, &unityState);
+        // Every piece of state is set here: the private state keeps whatever the last pass left in it.
+        const float black[4] = {0, 0, 0, 1};
+        g_ctx->ClearRenderTargetView(rtv, black);
+        D3D11_VIEWPORT vp{0, 0, (float)g_projW, (float)g_projH, 0, 1};
+        g_ctx->RSSetViewports(1, &vp);
+        g_ctx->RSSetState(g_noCull);
+        g_ctx->OMSetBlendState(g_stageBlend, nullptr, 0xffffffff);
+        g_ctx->OMSetDepthStencilState(nullptr, 0);
+        g_ctx->OMSetRenderTargets(1, &rtv, nullptr);
+        g_ctx->IASetInputLayout(nullptr);
+        g_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        g_ctx->VSSetShader(g_stageVs, nullptr, 0);
+        g_ctx->VSSetConstantBuffers(0, 1, &g_stageCb);
+        g_ctx->PSSetShader(g_stagePs, nullptr, 0);
+        g_ctx->PSSetSamplers(0, 1, &g_linear);
+        float stage[7];
+        memcpy(stage, g_stage, sizeof(stage));
+        ok = DrawPanel(image, stage, f.views[e].pose, f.views[e].fov, srgb);
+        if (ok && f.menu && !DrawPanel(f.menu, f.menuPose, f.views[e].pose, f.views[e].fov, srgb)) Log("menu could not be drawn in the eye view");
+        ID3D11RenderTargetView* noRtv = nullptr;
+        g_ctx->OMSetRenderTargets(1, &noRtv, nullptr);
+        g_ctx->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+        g_ctx1->SwapDeviceContextState(unityState, nullptr);
+        if (unityState) unityState->Release();
+        if (g_dumpWanted) {
+            DumpImage("", e, image);
+            DumpImage("_view", e, g_proj[e].images[idx].texture);
+            if (e == 1) g_dumpWanted = 0;
+        }
+    }
+    p_release(g_proj[e].handle, nullptr);
+    if (!ok) return false;
+    view = XrCompositionLayerProjectionView{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
+    view.pose = f.views[e].pose;
+    view.fov = f.views[e].fov;
+    view.subImage.swapchain = g_proj[e].handle;
+    view.subImage.imageRect.extent = {g_projW, g_projH};
     return true;
 }
 
@@ -460,6 +680,7 @@ static bool StartXr() {
         XrInstanceProperties ip{XR_TYPE_INSTANCE_PROPERTIES};
         if (XR_SUCCEEDED(props(g_inst, &ip)))
             Log("runtime %s %u.%u.%u", ip.runtimeName, XR_VERSION_MAJOR(ip.runtimeVersion), XR_VERSION_MINOR(ip.runtimeVersion), XR_VERSION_PATCH(ip.runtimeVersion));
+            strcpy_s(g_runtimeName, ip.runtimeName);
     }
 
     PFN_xrGetSystem getSystem;
@@ -467,6 +688,15 @@ static bool StartXr() {
     XrSystemGetInfo sgi{XR_TYPE_SYSTEM_GET_INFO};
     sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     XRCHECK(getSystem(g_inst, &sgi, &g_sys));
+
+    PFN_xrGetSystemProperties sysProps;
+    if (GetFn("xrGetSystemProperties", sysProps)) {
+        XrSystemProperties sp{XR_TYPE_SYSTEM_PROPERTIES};
+        if (XR_SUCCEEDED(sysProps(g_inst, g_sys, &sp))) {
+            Log("headset %s, vendor %u", sp.systemName, sp.vendorId);
+            strcpy_s(g_systemName, sp.systemName);
+        }
+    }
 
     PFN_xrGetD3D11GraphicsRequirementsKHR req11;
     if (!GetFn("xrGetD3D11GraphicsRequirementsKHR", req11)) return false;
@@ -571,7 +801,7 @@ static bool CopyEye(int e, ID3D11Texture2D* src, XrCompositionLayerQuad& quad) {
     ID3D11Texture2D* finalImage = Sharpen(e, src);
     g_ctx->CopySubresourceRegion(g_swap[e].images[idx].texture, 0, 0, 0, 0, finalImage, 0, nullptr);
     if (g_dumpWanted) {
-        DumpImage(e, finalImage);
+        DumpImage("", e, finalImage);
         if (e == 1) g_dumpWanted = 0;
     }
     p_release(g_swap[e].handle, nullptr);
@@ -647,7 +877,25 @@ static void DoSubmit() {
     const XrCompositionLayerBaseHeader* layers[4];
     XrCompositionLayerQuad menuQuad;
     uint32_t count = 0;
-    if (f.shouldRender) {
+    XrCompositionLayerProjectionView views[2];
+    XrCompositionLayerProjection proj{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+    LONG mode = (g_layerMode && f.viewsValid && EnsureProjection()) ? 1 : 0;
+    if (f.shouldRender) g_activeLayer = mode;
+    if (f.shouldRender && mode != g_loggedMode) {
+        g_loggedMode = mode;
+        if (mode) Log("LAYER projection: stage and menu drawn in the eyes, %dx%d per eye", g_projW, g_projH);
+        else Log("LAYER quads: stage as one panel per eye (%s)", !g_layerMode ? "chosen" : g_projState < 0 ? "Steady pass unavailable" : "no head tracking");
+    }
+    if (f.shouldRender && mode) {
+        if (DrawEye(0, f.src[0], f, views[0]) && DrawEye(1, f.src[1], f, views[1])) {
+            proj.space = g_space;
+            proj.viewCount = 2;
+            proj.views = views;
+            layers[count++] = (XrCompositionLayerBaseHeader*)&proj;
+        } else {
+            g_skippedAcquire++;
+        }
+    } else if (f.shouldRender) {
         bool haveBackdrop = false;
         if (g_black.handle && f.viewsValid) {
             uint32_t idx = 0;
@@ -699,6 +947,16 @@ static void DoShutdown() {
     g_black.handle = XR_NULL_HANDLE;
     g_menuSwap.handle = XR_NULL_HANDLE;
     g_menuW = g_menuH = 0;
+    for (int e = 0; e < 2; e++) {
+        for (auto& v : g_projRtv[e]) if (v) v->Release();
+        g_projRtv[e].clear();
+        g_proj[e].handle = XR_NULL_HANDLE;
+        g_proj[e].images.clear();
+    }
+    g_projW = 0;
+    g_projState = 0;
+    g_activeLayer = -1;
+    g_loggedMode = -1;
     g_inst = XR_NULL_HANDLE;
     g_sess = XR_NULL_HANDLE;
     g_space = XR_NULL_HANDLE;
@@ -736,6 +994,12 @@ API void CupXR_SetMenu(void* tex, float cx, float cy, float cz, float width, flo
 }
 API void CupXR_DumpNext(const char* basePath) { strcpy_s(g_dumpPath, basePath); g_dumpWanted = 1; }
 API int CupXR_RecommendedWidth() { return g_recW; }
+API void CupXR_SetLayerMode(int mode) { g_layerMode = mode ? 1 : 0; }
+API int CupXR_ActiveLayer() { return (int)g_activeLayer; }
+API void CupXR_RuntimeInfo(char* runtime, int runtimeSize, char* system, int systemSize) {
+    strncpy_s(runtime, runtimeSize, g_runtimeName, _TRUNCATE);
+    strncpy_s(system, systemSize, g_systemName, _TRUNCATE);
+}
 
 // Call on the main thread before the init event. The textures must already exist in the Unity player.
 API void CupXR_Start(void* left, void* right, int width, int height) {
