@@ -28,3 +28,8 @@ On the Pimax: Auto (Panel). Compare Steady and Panel for sharpness and steadines
 2. Game speed is by construction (1/60 fixed step kept); 72, 90 and 120 Hz not run on RigB (null driver is 144 only).
 3. Local co-op not tested.
 4. The game pauses when its window loses focus (RE_NOTES, 1.02). Unchanged; ask Steve whether to keep it running.
+
+## Reference v1.4, section 2a
+
+Reviewed 2026-11-09 against 1.02. Steve, 2026-11-09: this game is compliant enough as is, no action. The gaps listed in the thread
+(auto recenter timing, focus, menu placement rows, resolution now and next, DualSense, ultrawide check and others) are not planned.
