@@ -4,7 +4,7 @@ Updated 2026-11-08 (RigB).
 
 ## Where things stand
 
-1.01 is the public release (GitHub v1.01, latest). 1.02 is on RigA for Steve's comparison, local commits only, not published.
+1.02 is the public release (GitHub v1.02, latest, published 2026-11-09 on Steve's go-ahead).
 1.02 adds the Picture setting (Auto, Steady, Panel; RE_NOTES has the results). Steve tested 1.0 on Pimax Dream Air (SteamVR) and
 Quest 3 (Virtual Desktop). 1.01 and 1.02 tested on RigB only.
 
