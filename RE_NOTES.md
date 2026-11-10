@@ -320,3 +320,24 @@ throughout. With the game's VSync setting on, the mod logged "game set ... vsync
 All pass (0.98 to 1.02). Caveat from the reference: RigB's fake headset does not pace like a real one (Unity ran 100 fps at
 72 Hz and 140 at 90 Hz), so confirm with a GAMESPEED line in a real headset log once the probe is always on. Not tested: a
 gameplay level with the player moving, local co-op, the flat window (does not count).
+
+## 1.04: DualSense, keyboard menu key, speed log (RigB, 2026-11-10)
+
+- DualSense: native DualSense.cpp reads a PS5 DualSense (054C:0CE6) or DualSense Edge (054C:0DF2) over HID, USB report
+  0x01 or Bluetooth report 0x31 (asks for feature report 0x05 to switch Bluetooth to the full report), and hooks
+  xinput1_4 XInputGetState and ordinal 100 with MinHook (BSD-2-Clause): while no real XInput pad is connected, the first
+  empty slot reports the DualSense mapped to Xbox buttons. Rewired and the mod menu both read XInput. Rewired's raw view of
+  the pad is filtered out of ReInput.controllers.Joysticks (Harmony postfix) and taken away from players, because the game's
+  Rewired data knows DualShock 4 but not DualSense (no "DualSense" string in its assets; "Wireless Controller.*" names would
+  match it as a DualShock 4). Menu shows PlayStation button names while the DualSense is in use; DualSense row on Options.
+  RigB has no DualSense: verified only that nothing changed without one (log "DualSense support on: looking for a pad",
+  "PAD DualSense none, shown as Xbox pad -1", the lab's virtual Xbox pad still drives the title, slot screen and menu,
+  Rewired sees only "XInput Gamepad 1"). With a real DualSense: not verified.
+- Keyboard: the game's keyboard maps (lab `keymap`, Rewired, player 0) use the arrows, Z, X, C, V, Tab, Left Shift for play
+  and arrows, Tab, Backspace, Z, Return, Escape, Shift in menus. No Insert and no F1. Menu key: Insert (config Menu.Key),
+  F1 as well. In the menu: arrows, Enter, Esc or Backspace, Page Up/Down or Q/E. The game gets input back only when every
+  key and button is up. Tested on RigB: Insert opened, E changed tab, Backspace closed, pad chord opened, Esc closed; the
+  game showed no pause card after the Esc close (Cuphead was on the death card at the time, so this is not a clean check).
+- Game speed line is on for every player while VR runs (10 s windows). Windows under 20 fps (loading) are marked
+  "(loading, not counted)" and do not warn; before that change the first window during a load read 0.004 and warned.
+  Live: 0.995 to 1.000 at 144 Hz after the change. Eye check 0 of 7,290,000.
