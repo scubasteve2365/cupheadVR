@@ -279,3 +279,44 @@ Eye check 0 of 7,290,000. Not verified: anything on VDXR.
 Timing check (OriVR session reported restarting SteamVR on RigB 07:57 to 08:03 on 2026-11-10): every 1.03 result above was
 taken by 07:55:21 (game log last written then, captures 07:54:41 to 07:55:10), with the session at state 5 and 144 Hz
 throughout. The 1.03 results stand.
+
+## Game speed in VR, reference v1.9 (RigB, 2026-11-10)
+
+Code search (decompile, Steam build 20241530): no writes to Time.timeScale, fixedDeltaTime or maximumDeltaTime in the
+game's code (1/60 s step and 1/3 s maximum come from the project settings). targetFrameRate = 60 in CupheadStartScene.cs:12
+and Level.cs:820 (every level load). VSync only from the player's setting (OptionsGUI.cs:785, SettingsData.cs:254). Nothing
+compares frame time with tick time (no Ori-style SyncFramesTest). Tick constants: 60f and 1/60 appear only in maths already
+multiplied by a frame or tick time, a 1/60 s wait (OldManLevelSockPuppetHandler.cs:431) and jump timing in the fixed step;
+12.5f is a damping factor (AirplaneLevelPlayerPlane.cs). The game's own speed control is CupheadTime.GlobalSpeed.
+
+Method: lab probe `speedlog` (SpeedLog.cs): game seconds per real second from Time.time, tick speed from fixed ticks x tick
+length, over 10 s windows; tools/speedtest.py runs every rate with a fresh SteamVR and a fresh launch (tools/nullhz.py, from
+SF6VR, sets the null driver's rate), two windows per condition. Map scene (scene_map_world_1), player idle. Session state 5.
+Mod settings: Steve's defaults from the lab config (1.03 build). Game VSync on = the game's saved default on RigB
+(vSyncCount 1 in its settings); off = set in memory only (lab `gamevsync 0`). Native stereo is the only stereo mode.
+Logs: evidence/CupheadVR/2026-11-10/speed/speed_<rate>hz_LogOutput.log.
+
+| Headset (fake) | Game VSync setting | Picture | Game s per real s (2 windows) | Ticks per s | Unity fps |
+|---|---|---|---|---|---|
+| 72 Hz | on (default) | Panel | 1.000, 1.000 | 60.1, 60.0 | 101 |
+| 72 Hz | on (default) | Steady | 1.000, 1.000 | 60.0, 60.1 | 100 |
+| 72 Hz | off | Panel | 1.000, 1.000 | 59.9, 60.1 | 101 |
+| 72 Hz | off | Steady | 1.001, 1.000 | 60.1, 59.9 | 100 |
+| 90 Hz | on (default) | Panel | 1.000, 1.000 | 60.0, 60.0 | 140 |
+| 90 Hz | on (default) | Steady | 1.000, 1.000 | 60.0, 60.0 | 140 |
+| 90 Hz | off | Panel | 1.000, 1.000 | 60.0, 60.0 | 140 |
+| 90 Hz | off | Steady | 1.000, 1.000 | 60.1, 60.0 | 140 |
+| 120 Hz | on (default) | Panel | 1.001, 1.000 | 60.0, 60.1 | 144 |
+| 120 Hz | on (default) | Steady | 1.000, 1.000 | 60.1, 60.0 | 144 |
+| 120 Hz | off | Panel | 1.000, 1.000 | 60.1, 60.0 | 144 |
+| 120 Hz | off | Steady | 1.000, 1.000 | 60.0, 60.0 | 144 |
+| 144 Hz | on (default) | Panel | 1.000, 1.000 | 60.0, 60.0 | 144 |
+| 144 Hz | on (default) | Steady | 1.000, 1.000 | 60.1, 60.0 | 144 |
+| 144 Hz | off | Panel | 1.000, 1.000 | 60.0, 60.1 | 144 |
+| 144 Hz | off | Steady | 1.000, 1.000 | 60.0, 60.1 | 144 |
+
+Tick speed (ticks x 1/60 s per real s) 0.999 to 1.001 in every window. Time scale 1.00 and CupheadTime.GlobalSpeed 1.00
+throughout. With the game's VSync setting on, the mod logged "game set ... vsync 1, lifted" once per switch and held it off.
+All pass (0.98 to 1.02). Caveat from the reference: RigB's fake headset does not pace like a real one (Unity ran 100 fps at
+72 Hz and 140 at 90 Hz), so confirm with a GAMESPEED line in a real headset log once the probe is always on. Not tested: a
+gameplay level with the player moving, local co-op, the flat window (does not count).
