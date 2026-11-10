@@ -4,7 +4,7 @@ Updated 2026-11-08 (RigB).
 
 ## Where things stand
 
-1.02 is the public release (GitHub v1.02, latest, published 2026-11-09 on Steve's go-ahead).
+1.03 is the public release (GitHub v1.03, latest, published 2026-11-10 on Steve's go-ahead; Surround setting).
 1.02 adds the Picture setting (Auto, Steady, Panel; RE_NOTES has the results). Steve tested 1.0 on Pimax Dream Air (SteamVR) and
 Quest 3 (Virtual Desktop). 1.01 and 1.02 tested on RigB only.
 
