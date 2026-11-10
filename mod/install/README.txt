@@ -17,8 +17,10 @@ Play
 3. A stage floats in front of you. Play as usual.
 
 Settings
-Hold both sticks down for half a second to open the menu (F1 on a keyboard). The game pauses while it is open.
+Hold both sticks down for half a second to open the menu, or press Insert (or F1) on a keyboard. The game pauses while it is open.
 LB and RB (or LT and RT) change tab. Up and down choose a setting. Left and right change it. A selects. B closes.
+On a keyboard: arrow keys move and change, Enter selects, Esc or Backspace closes, Page Up and Page Down (or Q and E) change tab.
+A PlayStation 5 DualSense works too, over USB or Bluetooth, with the same buttons in the PlayStation places (Cross selects, Circle closes).
 Each setting has a short explanation at the bottom of the menu.
 
 Stage tab
@@ -43,7 +45,9 @@ Picture tab
 - Smooth motion: moving things are drawn smoothly at your headset's refresh rate. The game itself keeps its normal speed.
 
 Options tab
-- Click sounds, Reset everything, Close.
+- Click sounds.
+- DualSense: reads a PS5 DualSense directly and gives it to the game as an Xbox pad. It steps aside when an Xbox pad is connected. Turn it off if Steam Input or DS4Windows already handles your DualSense.
+- Reset everything, Close.
 
 Uninstall
 Double click "Install CupheadVR.bat" and type 2. No game files are changed by this mod.
@@ -69,5 +73,5 @@ Notes
 - The game keeps its own 60 updates a second, so its speed is exactly the same as flat. Smooth motion draws the moving things in between.
 - Settings are saved in BepInEx\config\com.scubasteve2365.cupheadvr.cfg in the game folder.
 
-Version 1.03. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
+Version 1.04. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
 This is a fan mod, not made or approved by Studio MDHR.

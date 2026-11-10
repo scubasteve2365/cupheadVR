@@ -10,7 +10,7 @@ import shutil
 import sys
 import zipfile
 
-VERSION = "1.03"
+VERSION = "1.04"
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.normpath(os.path.join(HERE, "..", "..", "build"))
 PKG = os.path.join(BUILD, "package", "CupheadVR")
@@ -40,6 +40,7 @@ licences = os.path.join(PKG, "licences")
 os.makedirs(licences)
 shutil.copy2(xr_licence, os.path.join(licences, "OpenXR-loader-LICENSE.txt"))
 shutil.copy2(bep_licence, os.path.join(licences, "BepInEx-LICENSE.txt"))
+shutil.copy2(r"C:\VRLabin\minhook\LICENSE.txt", os.path.join(licences, "MinHook-LICENSE.txt"))
 shutil.copy2(os.path.join(HERE, "..", "..", "LICENSE"), os.path.join(licences, "CupheadVR-LICENSE.txt"))
 
 zip_path = os.path.join(BUILD, "package", "CupheadVR-" + VERSION + ".zip")

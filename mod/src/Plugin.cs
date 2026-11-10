@@ -30,7 +30,8 @@ namespace CupheadVR
         int padCheckFrame, lastPadState = -9;
         ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution, characterPop, lean;
         ConfigEntry<int> clickVolume;
-        ConfigEntry<string> picture, surround;
+        ConfigEntry<string> picture, surround, menuKey;
+        bool speedLogOff;
         string commandFile;
         int nextCommandCheck;
         float dumpAt = -1f;
@@ -64,6 +65,7 @@ namespace CupheadVR
             picture = Config.Bind("Picture", "Picture", "Auto", "How the stage reaches the headset: Auto, Steady or Panel. Auto uses Steady on Virtual Desktop and Panel on everything else.");
             surround = Config.Bind("Picture", "Surround", "Black", "What you see around the stage: Black, Green (for Virtual Desktop's chroma-key passthrough) or Transparent (passthrough where the headset software offers it).");
             dualSense = Config.Bind("Controls", "DualSense", true, "Read a PlayStation 5 DualSense directly and give it to the game as an Xbox pad. Turn off if you use Steam Input or DS4Windows for it.");
+            menuKey = Config.Bind("Menu", "Key", "Insert", "Keyboard key that opens and closes the mod menu (a Unity KeyCode name). F1 always works too.");
             clickVolume = Config.Bind("Menu", "ClickVolume", 2, "Menu click sounds: 0 off, 1 low, 2 medium, 3 high.");
             commandFile = Path.Combine(Paths.GameRootPath, "vrlab_command.txt");
             OutDir = Path.Combine(Paths.GameRootPath, "vrlab_dumps");
@@ -74,6 +76,8 @@ namespace CupheadVR
             menu = gameObject.AddComponent<MenuUI>();
             menu.Version = "CUPHEAD VR " + Version;
             menu.Volume = () => clickVolume.Value;
+            try { menu.MenuKey = (KeyCode)Enum.Parse(typeof(KeyCode), menuKey.Value, true); }
+            catch (Exception) { Log.LogWarning("Menu key \"" + menuKey.Value + "\" is not a key name, using Insert"); menu.MenuKey = KeyCode.Insert; }
             menu.Closed = () => { rig.ApplyStage(); rig.UpdateResolution(); };
             BuildMenu();
             rig.Menu = menu;
@@ -93,6 +97,8 @@ namespace CupheadVR
 
         void Update()
         {
+            // Game speed line in every player's log while VR runs (reference v1.9, section 10).
+            if (rig.Active && !speedLog.On && !speedLogOff) speedLog.Begin(10f);
             if (Time.frameCount >= padCheckFrame)
             {
                 padCheckFrame = Time.frameCount + 60;
@@ -360,7 +366,8 @@ namespace CupheadVR
                     PushSettings();
                     rig.LogPicture();
                     break;
-                case "speedlog": if (arg == "0") speedLog.On = false; else speedLog.Begin(arg.Length > 0 ? F(arg) : 5f); break;
+                case "speedlog": speedLogOff = arg == "0"; if (speedLogOff) speedLog.On = false; else speedLog.Begin(arg.Length > 0 ? F(arg) : 5f); break;
+                case "keymap": PadSupport.LogKeyboardMap(); break;
                 case "gamevsync":
                     // The game's own VSync setting in memory only (never saved), as a player who left it on or turned it off.
                     SettingsData.Data.vSyncCount = arg == "1" ? 1 : 0;

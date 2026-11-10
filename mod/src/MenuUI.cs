@@ -43,6 +43,7 @@ namespace CupheadVR
         internal string Version = "";
         internal Action Closed;
         internal Func<int> Volume;          // 0 off .. 3 high
+        internal KeyCode MenuKey = KeyCode.Insert;  // opens and closes the menu from a keyboard; F1 always does too
         internal bool IsOpen { get; private set; }
         internal RenderTexture Texture { get { return IsOpen ? outRt : null; } }
 
@@ -338,11 +339,12 @@ namespace CupheadVR
                 bothSince = -1f;
                 bothFired = false;
             }
-            if (Input.GetKeyDown(KeyCode.F1)) { if (IsOpen) Close(); else Open(); }
+            if (Input.GetKeyDown(MenuKey) || (MenuKey != KeyCode.F1 && Input.GetKeyDown(KeyCode.F1))) { if (IsOpen) Close(); else Open(); }
 
             if (waitRelease)
             {
-                if (btn == 0 && !lt && !rtrig && Mathf.Abs(lx) < 8000 && Mathf.Abs(ly) < 8000)
+                // Pad and keyboard alike: nothing reaches the game until every button and key is up.
+                if (btn == 0 && !lt && !rtrig && Mathf.Abs(lx) < 8000 && Mathf.Abs(ly) < 8000 && !Input.anyKey)
                 {
                     waitRelease = false;
                     Time.timeScale = savedScale;
@@ -353,9 +355,9 @@ namespace CupheadVR
             if (!IsOpen) return;
 
             bool a = (btn & A) != 0 || Input.GetKey(KeyCode.Return);
-            bool b = (btn & B) != 0 || Input.GetKey(KeyCode.Escape);
-            bool tabL = (btn & LB) != 0 || lt || Input.GetKey(KeyCode.PageUp);
-            bool tabR = (btn & RB) != 0 || rtrig || Input.GetKey(KeyCode.PageDown);
+            bool b = (btn & B) != 0 || Input.GetKey(KeyCode.Escape) || Input.GetKey(KeyCode.Backspace);
+            bool tabL = (btn & LB) != 0 || lt || Input.GetKey(KeyCode.PageUp) || Input.GetKey(KeyCode.Q);
+            bool tabR = (btn & RB) != 0 || rtrig || Input.GetKey(KeyCode.PageDown) || Input.GetKey(KeyCode.E);
             if (b && !bWas) { bWas = true; aWas = a; Close(); return; }
             if (a && !aWas) PressRow();
             if (tabL && !tabLWas) ChangeTab(-1);

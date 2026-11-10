@@ -46,6 +46,26 @@ namespace CupheadVR
             catch (Exception e) { Plugin.Log.LogWarning("PAD joystick list: " + e.Message); }
         }
 
+        // Lab: every keyboard binding the game has for each player, to check the menu key is free.
+        internal static void LogKeyboardMap()
+        {
+            try
+            {
+                foreach (var p in ReInput.players.AllPlayers)
+                    foreach (var map in p.controllers.maps.GetAllMaps(ControllerType.Keyboard))
+                    {
+                        var sb = new System.Text.StringBuilder("KEYMAP player " + p.id + " map " + map.id + " enabled " + map.enabled + ":");
+                        foreach (var aem in map.AllMaps)
+                        {
+                            var action = ReInput.mapping.GetAction(aem.actionId);
+                            sb.Append(' ').Append(aem.keyCode).Append('=').Append(action != null ? action.name : aem.actionId.ToString());
+                        }
+                        Plugin.Log.LogInfo(sb.ToString());
+                    }
+            }
+            catch (Exception e) { Plugin.Log.LogWarning("KEYMAP failed: " + e.Message); }
+        }
+
         // Takes a hidden joystick away from any player it was given to.
         internal static void Unassign()
         {
