@@ -160,7 +160,6 @@ namespace CupheadVR
             help = Txt(body, 25, Ink, TextAnchor.UpperLeft, 860, 110, 8, -262);
             help.horizontalOverflow = HorizontalWrapMode.Wrap;
             footer = Txt(body, 21, InkSoft, TextAnchor.MiddleCenter, 940, 30, 0, -343);
-            footer.text = "LB / RB or LT / RT: tab     Up / down: choose     Left / right: change     A: select     B: close";
             SetLayer(root);
             root.SetActive(false);
             MakeSounds();
@@ -308,7 +307,12 @@ namespace CupheadVR
                 rowBar[i].enabled = sel;
                 rowRule[i].enabled = used && !sel;
             }
-            help.text = selected < rows.Count && rows[selected].Help != null ? rows[selected].Help() : "";
+            string h = selected < rows.Count && rows[selected].Help != null ? rows[selected].Help() : "";
+            bool ps = PadSupport.PlayStationNames;
+            help.text = ps ? h.Replace("Press A ", "Press Cross ").Replace(" A ", " Cross ").Replace(" B or ", " Circle or ") : h;
+            footer.text = ps
+                ? "L1 / R1 or L2 / R2: tab     Up / down: choose     Left / right: change     Cross: select     Circle: close"
+                : "LB / RB or LT / RT: tab     Up / down: choose     Left / right: change     A: select     B: close";
             menuCam.Render();
             Graphics.Blit(rt, outRt, new Vector2(1f, -1f), new Vector2(0f, 1f));
         }

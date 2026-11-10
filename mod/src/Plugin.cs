@@ -12,10 +12,10 @@ namespace CupheadVR
     // CupheadVR 1.0: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
     // layers, smooth motion at any headset rate, and an in-headset menu (hold both sticks). VR starts by itself unless
     // VR.AutoStart is off; if OpenXR cannot start, the game stays flat. Lab probes stay available behind Lab.Commands.
-    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.3")]
+    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.4")]
     public class Plugin : BaseUnityPlugin
     {
-        internal const string Version = "1.03";
+        internal const string Version = "1.04";
         internal static BepInEx.Logging.ManualLogSource Log;
         internal static ConfigEntry<bool> BlockSaves;
         internal static ConfigEntry<float> Grain, Fringe;
@@ -26,7 +26,8 @@ namespace CupheadVR
         // Defaults are Steve's own settings from his headset tests (RigA, 2026-11-07).
         const float DefaultWidth = 2.15f, DefaultDistance = 1.25f, DefaultDepth = 1.3f, DefaultSky = 0.75f, DefaultSharpen = 1.0f,
             DefaultPop = 1.2f, DefaultPopOut = 0.75f, DefaultGrain = 0f, DefaultFringe = 0f;
-        ConfigEntry<bool> labCommands, autoDump, autoStart, smooth, edgeMatch;
+        ConfigEntry<bool> labCommands, autoDump, autoStart, smooth, edgeMatch, dualSense;
+        int padCheckFrame, lastPadState = -9;
         ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution, characterPop, lean;
         ConfigEntry<int> clickVolume;
         ConfigEntry<string> picture, surround;
@@ -62,6 +63,7 @@ namespace CupheadVR
             Fringe = Config.Bind("Picture", "ColorFringe", DefaultFringe, "The game's colour fringing at the edges, 1 is the game's own amount, 0 is off.");
             picture = Config.Bind("Picture", "Picture", "Auto", "How the stage reaches the headset: Auto, Steady or Panel. Auto uses Steady on Virtual Desktop and Panel on everything else.");
             surround = Config.Bind("Picture", "Surround", "Black", "What you see around the stage: Black, Green (for Virtual Desktop's chroma-key passthrough) or Transparent (passthrough where the headset software offers it).");
+            dualSense = Config.Bind("Controls", "DualSense", true, "Read a PlayStation 5 DualSense directly and give it to the game as an Xbox pad. Turn off if you use Steam Input or DS4Windows for it.");
             clickVolume = Config.Bind("Menu", "ClickVolume", 2, "Menu click sounds: 0 off, 1 low, 2 medium, 3 high.");
             commandFile = Path.Combine(Paths.GameRootPath, "vrlab_command.txt");
             OutDir = Path.Combine(Paths.GameRootPath, "vrlab_dumps");
@@ -87,8 +89,22 @@ namespace CupheadVR
             Log.LogInfo("CupheadVR " + Version + " loaded. Unity " + Application.unityVersion + ", pointer size " + IntPtr.Size);
         }
 
+        void Start() { rig.StartPad(dualSense.Value); }
+
         void Update()
         {
+            if (Time.frameCount >= padCheckFrame)
+            {
+                padCheckFrame = Time.frameCount + 60;
+                int state = PadSupport.Connected() * 10 + PadSupport.Slot();
+                if (state != lastPadState)
+                {
+                    lastPadState = state;
+                    Log.LogInfo("PAD DualSense " + (PadSupport.Connected() == 0 ? "none" : PadSupport.Connected() == 2 ? "Bluetooth" : "USB") + ", shown as Xbox pad " + PadSupport.Slot());
+                }
+                PadSupport.LogJoysticks();
+                PadSupport.Unassign();
+            }
             if (Time.frameCount >= nextCommandCheck)
             {
                 nextCommandCheck = Time.frameCount + 15;
@@ -158,6 +174,9 @@ namespace CupheadVR
             var options = new MenuUI.Tab { Name = "Options" };
             options.Rows.Add(new MenuUI.Row { Label = "Click sounds", Value = () => new[] { "Off", "Low", "Medium", "High" }[Mathf.Clamp(clickVolume.Value, 0, 3)],
                 Change = dir => clickVolume.Value = Mathf.Clamp(clickVolume.Value + dir, 0, 3), Help = () => "How loud the menu clicks are." });
+            options.Rows.Add(new MenuUI.Row { Label = "DualSense", Value = () => !dualSense.Value ? "Off" : PadSupport.Connected() == 0 ? "On (none found)" : PadSupport.Slot() >= 0 ? (PadSupport.Connected() == 2 ? "On (Bluetooth)" : "On (USB)") : "On (Xbox pad in use)",
+                Change = dir => { dualSense.Value = !dualSense.Value; rig.EnablePad(dualSense.Value); Log.LogInfo("MENU DualSense " + dualSense.Value); },
+                Help = () => "A PlayStation 5 DualSense works like an Xbox pad in the game and this menu, over USB or Bluetooth. It steps aside when an Xbox pad is connected. Turn it off if Steam Input or DS4Windows already handles your DualSense." });
             options.Rows.Add(new MenuUI.Row { Label = "Reset everything", Press = ResetAll, Help = () => "Press A to put every setting back to its default." });
             options.Rows.Add(new MenuUI.Row { Label = "Close", Press = () => menu.Close(), Help = () => "Close the menu. B or holding both sticks also closes it." });
             menu.Tabs.Add(stage);
@@ -231,6 +250,8 @@ namespace CupheadVR
             surround.Value = "Black";
             Grain.Value = DefaultGrain;
             Fringe.Value = DefaultFringe;
+            dualSense.Value = true;
+            rig.EnablePad(true);
             clickVolume.Value = 2;
             PushSettings();
             Log.LogInfo("MENU defaults");

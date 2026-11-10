@@ -155,6 +155,21 @@ namespace CupheadVR
 
         internal bool Active { get { return active; } }
 
+        StateFn xPadStart, xPadConnected, xPadSlot;
+        SetLayerModeFn xPadEnable;
+
+        // DualSense support starts with the game, whether or not VR does.
+        internal void StartPad(bool on)
+        {
+            if (!LoadNative()) return;
+            xPadEnable(on ? 1 : 0);
+            if (on) xPadStart();
+            PadSupport.Slot = () => xPadSlot();
+            PadSupport.Connected = () => xPadConnected();
+        }
+
+        internal void EnablePad(bool on) { if (nativeLoaded) { xPadEnable(on ? 1 : 0); if (on) xPadStart(); } }
+
         bool LoadNative()
         {
             if (nativeLoaded) return true;
@@ -178,6 +193,10 @@ namespace CupheadVR
             xPopLog = Fn<PopLogFn>(module, "CupXR_PopLog");
             xStats = Fn<StatsFn>(module, "CupXR_Stats");
             xSetMenu = Fn<SetMenuFn>(module, "CupXR_SetMenu");
+            xPadStart = Fn<StateFn>(module, "CupPad_Start");
+            xPadConnected = Fn<StateFn>(module, "CupPad_Connected");
+            xPadSlot = Fn<StateFn>(module, "CupPad_Slot");
+            xPadEnable = Fn<SetLayerModeFn>(module, "CupPad_Enable");
             xSetLayerMode = Fn<SetLayerModeFn>(module, "CupXR_SetLayerMode");
             xActiveLayer = Fn<StateFn>(module, "CupXR_ActiveLayer");
             xSetSurround = Fn<SetLayerModeFn>(module, "CupXR_SetSurround");

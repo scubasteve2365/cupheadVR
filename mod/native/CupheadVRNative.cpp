@@ -62,6 +62,16 @@ static void Log(const char* fmt, ...) {
     if (g_log.size() < 2000) g_log.push_back(buf);
 }
 
+// For DualSense.cpp, which shares this log.
+void NativeLog(const char* fmt, ...) {
+    char buf[512];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, a);
+    va_end(a);
+    Log("%s", buf);
+}
+
 static HMODULE g_loader;
 static PFN_xrGetInstanceProcAddr g_gipa;
 static XrInstance g_inst = XR_NULL_HANDLE;
