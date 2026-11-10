@@ -276,3 +276,6 @@ Transparent falls back to black there (logged). Steady green: 59% of the view pu
 blended pixels (sg_view_0.bmp). Headset Window shows green around the stage in Steady and Panel (steady_green.png,
 panel_green.png, looked at); in Panel the outer view edge shades darker in that window, not verified on VD.
 Eye check 0 of 7,290,000. Not verified: anything on VDXR.
+Timing check (OriVR session reported restarting SteamVR on RigB 07:57 to 08:03 on 2026-11-10): every 1.03 result above was
+taken by 07:55:21 (game log last written then, captures 07:54:41 to 07:55:10), with the session at state 5 and 144 Hz
+throughout. The 1.03 results stand.
