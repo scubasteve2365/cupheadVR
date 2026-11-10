@@ -37,6 +37,7 @@ namespace CupheadVR
         Probes probes;
         XrRig rig;
         MenuUI menu;
+        SpeedLog speedLog;
 
         void Awake()
         {
@@ -74,6 +75,8 @@ namespace CupheadVR
             menu.Closed = () => { rig.ApplyStage(); rig.UpdateResolution(); };
             BuildMenu();
             rig.Menu = menu;
+            speedLog = gameObject.AddComponent<SpeedLog>();
+            speedLog.Rig = rig;
             PushSettings();
             SceneManager.sceneLoaded += (scene, mode) =>
             {
@@ -335,6 +338,13 @@ namespace CupheadVR
                     picture.Value = arg == "steady" ? "Steady" : arg == "panel" ? "Panel" : "Auto";
                     PushSettings();
                     rig.LogPicture();
+                    break;
+                case "speedlog": if (arg == "0") speedLog.On = false; else speedLog.Begin(arg.Length > 0 ? F(arg) : 5f); break;
+                case "gamevsync":
+                    // The game's own VSync setting in memory only (never saved), as a player who left it on or turned it off.
+                    SettingsData.Data.vSyncCount = arg == "1" ? 1 : 0;
+                    QualitySettings.vSyncCount = SettingsData.Data.vSyncCount;
+                    Log.LogInfo("GAMEVSYNC game setting " + SettingsData.Data.vSyncCount + " (memory only)");
                     break;
                 case "surround":
                     surround.Value = arg == "green" ? "Green" : arg == "transparent" ? "Transparent" : "Black";

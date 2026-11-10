@@ -83,6 +83,7 @@ namespace CupheadVR
         internal float PopOut;            // 0 keeps the play plane on the stage; higher brings everything toward you
         internal float SkyDepth = 0.85f;
         internal float CharacterPop = 1.0f;
+        internal float PeriodMs;  // the runtime's frame period, last frame
         internal int Surround;  // 0 black, 1 green (for chroma-key passthrough), 2 transparent (runtime alpha blend)
         internal bool CanTransparent { get { return xCanTransparent != null && xCanTransparent() != 0; } }
         Texture2D greenTex;
@@ -398,6 +399,7 @@ namespace CupheadVR
                 if (xBeginFrame(out info, eyeOut[0].GetNativeTexturePtr(), eyeOut[1].GetNativeTexturePtr()) == 0) continue;
                 if (xTakeRecenter() != 0) wantRecenter = true;
                 MatchTick(info.periodMs);
+                PeriodMs = info.periodMs;
                 if (info.viewsValid != 0 && wantRecenter)
                 {
                     wantRecenter = false;
