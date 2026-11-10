@@ -259,3 +259,20 @@ Lab trap, not a menu bug: the game stops running whenever its window loses focus
 SetForegroundWindow on the compositor, and after it the mod read no more commands until a key press gave the game focus back
 (first looked like a hang with the menu open; the same menu steps without the capture ran fine). Behaviour is the same in
 1.01. If a player's window loses focus the game pauses and no new frames reach the headset. Not changed in 1.02.
+
+## 1.03 test: Surround for passthrough (RigB, 2026-11-10)
+
+Steve asked for the dead area around the stage to be green, so Virtual Desktop's passthrough can show there. New Surround
+setting (Stage tab, config Picture.Surround): Black (default), Green, Transparent.
+- Green: pure (0, 255, 0) for VD's chroma key. Steady clears the eye views to green and draws the stage with a hard edge
+  (a soft edge would leave a green-tinted line that does not key). Panel clears the 16x16 backdrop layer to green each frame.
+  Edge-trim bars use the same green.
+- Transparent: uses XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND when the runtime lists it (no backdrop layer, projection layer
+  with source alpha). Otherwise black, logged.
+- The mod now logs every instance extension and the environment blend modes at start, so a VDXR log answers what VD offers.
+
+RigB (SteamVR 2.18.4 null driver), evidence/CupheadVR/2026-11-10/v103: 42 extensions, blend modes "opaque" only, so
+Transparent falls back to black there (logged). Steady green: 59% of the view pure green, the stage box starts with no
+blended pixels (sg_view_0.bmp). Headset Window shows green around the stage in Steady and Panel (steady_green.png,
+panel_green.png, looked at); in Panel the outer view edge shades darker in that window, not verified on VD.
+Eye check 0 of 7,290,000. Not verified: anything on VDXR.

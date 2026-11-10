@@ -119,7 +119,13 @@ static int g_menuW, g_menuH;
 static std::mutex g_menuLock;
 static ID3D11Texture2D* g_menuTex;           // set by the plugin while the menu is open, else null
 static float g_menuPose[7];                  // centre x, y, z, width, height, turn y, w
-static Swap g_black;                         // 16x16 black image, shown to both eyes as a projection layer behind the stage
+static Swap g_black;                         // 16x16 image in the surround colour, shown to both eyes as a projection layer behind the stage
+static volatile LONG g_surround = 0;         // 0 black, 1 green (for chroma-key passthrough), 2 transparent (runtime's alpha blend)
+static bool g_canAlphaBlend;                 // the runtime offers XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND
+static LONG g_loggedSurround = -1;
+static void SurroundColour(float out[4]) {
+    out[0] = 0; out[1] = g_surround == 1 ? 1.0f : 0; out[2] = 0; out[3] = g_surround == 2 && g_canAlphaBlend ? 0 : 1.0f;
+}
 static volatile LONG g_recenterPending = 0;  // the runtime recentred (reference space change event)
 
 static PFN_xrPollEvent p_poll;
@@ -371,14 +377,15 @@ static bool CreateSwapchains() {
 static const char* g_stageShader = R"(
 Texture2D src : register(t0);
 SamplerState linearClamp : register(s0);
-cbuffer Stage : register(b0) { float4 corner[4]; };
+cbuffer Stage : register(b0) { float4 corner[4]; float4 opts; };  // opts.x 1 = soft edge
 void vs(uint id : SV_VertexID, out float4 pos : SV_Position, out float2 uv : TEXCOORD0) {
     uv = float2(id & 1, id >> 1);
     pos = corner[id];
 }
 float4 ps(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
     float2 edge = min(uv, 1 - uv) / max(fwidth(uv), 0.000001);
-    return float4(src.Sample(linearClamp, uv).rgb, saturate(min(edge.x, edge.y)));
+    float a = opts.x > 0.5 ? saturate(min(edge.x, edge.y)) : 1;
+    return float4(src.Sample(linearClamp, uv).rgb, a);
 }
 )";
 
@@ -395,7 +402,7 @@ static bool CreateStagePass() {
     g_dev->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &g_stageVs);
     g_dev->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &g_stagePs);
     D3D11_BUFFER_DESC cb{};
-    cb.ByteWidth = 64;
+    cb.ByteWidth = 80;
     cb.Usage = D3D11_USAGE_DEFAULT;
     cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     g_dev->CreateBuffer(&cb, nullptr, &g_stageCb);
@@ -485,8 +492,10 @@ static bool DrawPanel(ID3D11Texture2D* tex, const float* pose, const XrPosef& ey
     sv.Texture2D.MipLevels = 1;
     ID3D11ShaderResourceView* srv = nullptr;
     if (FAILED(g_dev->CreateShaderResourceView(tex, &sv, &srv))) return false;
-    float corners[16];
+    float corners[20] = {};
     PanelCorners(pose, eye, fov, corners);
+    // A soft edge blends into the surround. Green keys out only where it is pure, so its edge stays hard.
+    corners[16] = g_surround == 1 ? 0.0f : 1.0f;
     g_ctx->UpdateSubresource(g_stageCb, 0, nullptr, corners, 0, 0);
     g_ctx->PSSetShaderResources(0, 1, &srv);
     g_ctx->Draw(4, 0);
@@ -526,8 +535,9 @@ static bool DrawEye(int e, ID3D11Texture2D* src, const PendingFrame& f, XrCompos
         ID3DDeviceContextState* unityState = nullptr;
         g_ctx1->SwapDeviceContextState(g_passState, &unityState);
         // Every piece of state is set here: the private state keeps whatever the last pass left in it.
-        const float black[4] = {0, 0, 0, 1};
-        g_ctx->ClearRenderTargetView(rtv, black);
+        float surround[4];
+        SurroundColour(surround);
+        g_ctx->ClearRenderTargetView(rtv, surround);
         D3D11_VIEWPORT vp{0, 0, (float)g_projW, (float)g_projH, 0, 1};
         g_ctx->RSSetViewports(1, &vp);
         g_ctx->RSSetState(g_noCull);
@@ -663,6 +673,24 @@ static bool StartXr() {
     g_gipa = (PFN_xrGetInstanceProcAddr)GetProcAddress(g_loader, "xrGetInstanceProcAddr");
     if (!g_gipa) { Log("loader has no xrGetInstanceProcAddr"); return false; }
 
+    PFN_xrEnumerateInstanceExtensionProperties enumExt = nullptr;
+    if (XR_SUCCEEDED(g_gipa(XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties", (PFN_xrVoidFunction*)&enumExt)) && enumExt) {
+        uint32_t n = 0;
+        if (XR_SUCCEEDED(enumExt(nullptr, 0, &n, nullptr)) && n) {
+            std::vector<XrExtensionProperties> props(n, XrExtensionProperties{XR_TYPE_EXTENSION_PROPERTIES});
+            if (XR_SUCCEEDED(enumExt(nullptr, n, &n, props.data()))) {
+                std::string line;
+                for (uint32_t i = 0; i < n; i++) {
+                    if (line.size() + strlen(props[i].extensionName) > 400) { Log("extensions: %s", line.c_str()); line.clear(); }
+                    line += props[i].extensionName;
+                    line += ' ';
+                }
+                if (!line.empty()) Log("extensions: %s", line.c_str());
+                Log("extensions offered: %u", n);
+            }
+        }
+    }
+
     PFN_xrCreateInstance createInstance;
     if (!GetFn("xrCreateInstance", createInstance)) return false;
     const char* exts[] = {XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
@@ -688,6 +716,21 @@ static bool StartXr() {
     XrSystemGetInfo sgi{XR_TYPE_SYSTEM_GET_INFO};
     sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     XRCHECK(getSystem(g_inst, &sgi, &g_sys));
+
+    PFN_xrEnumerateEnvironmentBlendModes enumBlend;
+    if (GetFn("xrEnumerateEnvironmentBlendModes", enumBlend)) {
+        XrEnvironmentBlendMode modes[8];
+        uint32_t n = 0;
+        if (XR_SUCCEEDED(enumBlend(g_inst, g_sys, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 8, &n, modes))) {
+            std::string list;
+            for (uint32_t i = 0; i < n; i++) {
+                list += modes[i] == XR_ENVIRONMENT_BLEND_MODE_OPAQUE ? "opaque " : modes[i] == XR_ENVIRONMENT_BLEND_MODE_ADDITIVE ? "additive " :
+                        modes[i] == XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND ? "alpha_blend " : "other ";
+                if (modes[i] == XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND) g_canAlphaBlend = true;
+            }
+            Log("see-through modes: %s(transparent surround %s)", list.c_str(), g_canAlphaBlend ? "available" : "not available");
+        }
+    }
 
     PFN_xrGetSystemProperties sysProps;
     if (GetFn("xrGetSystemProperties", sysProps)) {
@@ -891,18 +934,30 @@ static void DoSubmit() {
             proj.space = g_space;
             proj.viewCount = 2;
             proj.views = views;
+            if (g_surround == 2 && g_canAlphaBlend) proj.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
             layers[count++] = (XrCompositionLayerBaseHeader*)&proj;
         } else {
             g_skippedAcquire++;
         }
     } else if (f.shouldRender) {
         bool haveBackdrop = false;
-        if (g_black.handle && f.viewsValid) {
+        bool transparent = g_surround == 2 && g_canAlphaBlend;
+        if (g_black.handle && f.viewsValid && !transparent) {
             uint32_t idx = 0;
             if (XR_SUCCEEDED(p_acquire(g_black.handle, nullptr, &idx))) {
                 XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
                 wi.timeout = 100000000;
                 p_waitImage(g_black.handle, &wi);
+                D3D11_RENDER_TARGET_VIEW_DESC rv{};
+                rv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                rv.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+                ID3D11RenderTargetView* brtv = nullptr;
+                if (SUCCEEDED(g_dev->CreateRenderTargetView(g_black.images[idx].texture, &rv, &brtv))) {
+                    float colour[4];
+                    SurroundColour(colour);
+                    g_ctx->ClearRenderTargetView(brtv, colour);
+                    brtv->Release();
+                }
                 p_release(g_black.handle, nullptr);
                 for (int e = 0; e < 2; e++) {
                     bviews[e].pose = f.views[e].pose;
@@ -927,7 +982,13 @@ static void DoSubmit() {
     }
     XrFrameEndInfo fei{XR_TYPE_FRAME_END_INFO};
     fei.displayTime = f.displayTime;
-    fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+    bool seeThrough = g_surround == 2 && g_canAlphaBlend;
+    fei.environmentBlendMode = seeThrough ? XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND : XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+    if (g_surround != g_loggedSurround) {
+        g_loggedSurround = g_surround;
+        Log("SURROUND %s%s", g_surround == 1 ? "green" : g_surround == 2 ? "transparent" : "black",
+            g_surround == 2 && !g_canAlphaBlend ? " asked, but the runtime has no alpha blend: black used" : seeThrough ? " (alpha blend)" : "");
+    }
     fei.layerCount = count;
     fei.layers = layers;
     r = p_endFrame(g_sess, &fei);
@@ -996,6 +1057,8 @@ API void CupXR_DumpNext(const char* basePath) { strcpy_s(g_dumpPath, basePath); 
 API int CupXR_RecommendedWidth() { return g_recW; }
 API void CupXR_SetLayerMode(int mode) { g_layerMode = mode ? 1 : 0; }
 API int CupXR_ActiveLayer() { return (int)g_activeLayer; }
+API void CupXR_SetSurround(int mode) { g_surround = mode; }
+API int CupXR_CanTransparent() { return g_canAlphaBlend ? 1 : 0; }
 API void CupXR_RuntimeInfo(char* runtime, int runtimeSize, char* system, int systemSize) {
     strncpy_s(runtime, runtimeSize, g_runtimeName, _TRUNCATE);
     strncpy_s(system, systemSize, g_systemName, _TRUNCATE);

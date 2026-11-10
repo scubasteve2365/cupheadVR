@@ -24,6 +24,7 @@ Each setting has a short explanation at the bottom of the menu.
 Stage tab
 - Recenter: puts the stage straight ahead of where you face. SteamVR's own recenter does the same.
 - Stage distance and Stage size: where the stage stands and how big it is.
+- Surround: what you see around the stage. Black is normal. Green is pure green for Virtual Desktop's chroma-key passthrough, so your room shows around the stage. Transparent asks the headset software for see-through, where it offers that.
 - Reset the stage: back to 2.15 m wide at 1.25 m.
 
 Depth tab
@@ -68,5 +69,5 @@ Notes
 - The game keeps its own 60 updates a second, so its speed is exactly the same as flat. Smooth motion draws the moving things in between.
 - Settings are saved in BepInEx\config\com.scubasteve2365.cupheadvr.cfg in the game folder.
 
-Version 1.02. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
+Version 1.03. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
 This is a fan mod, not made or approved by Studio MDHR.

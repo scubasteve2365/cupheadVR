@@ -66,7 +66,8 @@ namespace CupheadVR
         StatsFn xStats;
         SetMenuFn xSetMenu;
         SetLayerModeFn xSetLayerMode;
-        StateFn xActiveLayer;
+        StateFn xActiveLayer, xCanTransparent;
+        SetLayerModeFn xSetSurround;
         RuntimeInfoFn xRuntimeInfo;
 
         static T Fn<T>(IntPtr module, string name) where T : class
@@ -82,6 +83,9 @@ namespace CupheadVR
         internal float PopOut;            // 0 keeps the play plane on the stage; higher brings everything toward you
         internal float SkyDepth = 0.85f;
         internal float CharacterPop = 1.0f;
+        internal int Surround;  // 0 black, 1 green (for chroma-key passthrough), 2 transparent (runtime alpha blend)
+        internal bool CanTransparent { get { return xCanTransparent != null && xCanTransparent() != 0; } }
+        Texture2D greenTex;
         internal int PictureMode;  // 0 Auto, 1 Steady (projection layer), 2 Panel (quad layers)
         internal string RuntimeName = "", HeadsetName = "";
         bool runtimeRead;
@@ -175,6 +179,8 @@ namespace CupheadVR
             xSetMenu = Fn<SetMenuFn>(module, "CupXR_SetMenu");
             xSetLayerMode = Fn<SetLayerModeFn>(module, "CupXR_SetLayerMode");
             xActiveLayer = Fn<StateFn>(module, "CupXR_ActiveLayer");
+            xSetSurround = Fn<SetLayerModeFn>(module, "CupXR_SetSurround");
+            xCanTransparent = Fn<StateFn>(module, "CupXR_CanTransparent");
             xRuntimeInfo = Fn<RuntimeInfoFn>(module, "CupXR_RuntimeInfo");
             renderEvent = xGetRenderEvent();
             nativeLoaded = true;
@@ -386,6 +392,7 @@ namespace CupheadVR
                 }
                 if (!runtimeRead) ReadRuntime();
                 xSetLayerMode(WantSteady ? 1 : 0);
+                xSetSurround(Surround);
                 PushMenu();
                 FrameInfo info;
                 if (xBeginFrame(out info, eyeOut[0].GetNativeTexturePtr(), eyeOut[1].GetNativeTexturePtr()) == 0) continue;
@@ -741,7 +748,14 @@ namespace CupheadVR
             RenderTexture.active = target;
             GL.PushMatrix();
             GL.LoadOrtho();
-            copyMat.mainTexture = Texture2D.blackTexture;
+            if (greenTex == null)
+            {
+                greenTex = new Texture2D(1, 1, TextureFormat.RGB24, false);
+                greenTex.SetPixel(0, 0, new Color(0f, 1f, 0f));
+                greenTex.Apply();
+            }
+            // Trimmed edges take the surround colour, so with Green they key out like the rest of the surround.
+            copyMat.mainTexture = Surround == 1 ? greenTex : Texture2D.blackTexture;
             copyMat.SetPass(0);
             GL.Begin(GL.QUADS);
             if (dx > 0f) Quad(0f, 0f, dx, 1f); else if (dx < 0f) Quad(1f + dx, 0f, 1f, 1f);

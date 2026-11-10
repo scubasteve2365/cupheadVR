@@ -12,10 +12,10 @@ namespace CupheadVR
     // CupheadVR 1.0: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
     // layers, smooth motion at any headset rate, and an in-headset menu (hold both sticks). VR starts by itself unless
     // VR.AutoStart is off; if OpenXR cannot start, the game stays flat. Lab probes stay available behind Lab.Commands.
-    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.2")]
+    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.3")]
     public class Plugin : BaseUnityPlugin
     {
-        internal const string Version = "1.02";
+        internal const string Version = "1.03";
         internal static BepInEx.Logging.ManualLogSource Log;
         internal static ConfigEntry<bool> BlockSaves;
         internal static ConfigEntry<float> Grain, Fringe;
@@ -29,7 +29,7 @@ namespace CupheadVR
         ConfigEntry<bool> labCommands, autoDump, autoStart, smooth, edgeMatch;
         ConfigEntry<float> stageWidth, stageDistance, depth, popOut, skyDepth, sharpen, resolution, characterPop, lean;
         ConfigEntry<int> clickVolume;
-        ConfigEntry<string> picture;
+        ConfigEntry<string> picture, surround;
         string commandFile;
         int nextCommandCheck;
         float dumpAt = -1f;
@@ -60,6 +60,7 @@ namespace CupheadVR
             Grain = Config.Bind("Picture", "FilmGrain", DefaultGrain, "Film grain and scratches, 1 is the game's own amount, 0 is off.");
             Fringe = Config.Bind("Picture", "ColorFringe", DefaultFringe, "The game's colour fringing at the edges, 1 is the game's own amount, 0 is off.");
             picture = Config.Bind("Picture", "Picture", "Auto", "How the stage reaches the headset: Auto, Steady or Panel. Auto uses Steady on Virtual Desktop and Panel on everything else.");
+            surround = Config.Bind("Picture", "Surround", "Black", "What you see around the stage: Black, Green (for Virtual Desktop's chroma-key passthrough) or Transparent (passthrough where the headset software offers it).");
             clickVolume = Config.Bind("Menu", "ClickVolume", 2, "Menu click sounds: 0 off, 1 low, 2 medium, 3 high.");
             commandFile = Path.Combine(Paths.GameRootPath, "vrlab_command.txt");
             OutDir = Path.Combine(Paths.GameRootPath, "vrlab_dumps");
@@ -125,6 +126,7 @@ namespace CupheadVR
                 Help = () => "Press A to put the stage straight ahead of where you face now. SteamVR's own recenter does the same." });
             stage.Rows.Add(Value("Stage distance", stageDistance, 0.05f, 0.5f, 10f, () => M(stageDistance.Value), "How far away the stage stands. The picture keeps its depth; only where it sits changes."));
             stage.Rows.Add(Value("Stage size", stageWidth, 0.05f, 0.5f, 10f, () => M(stageWidth.Value) + " wide", "How wide the stage is. Bigger is like sitting closer to a cinema screen."));
+            stage.Rows.Add(new MenuUI.Row { Label = "Surround", Value = SurroundText, Change = CycleSurround, Help = SurroundHelp });
             stage.Rows.Add(new MenuUI.Row { Label = "Reset the stage", Press = () => { stageDistance.Value = DefaultDistance; stageWidth.Value = DefaultWidth; PushSettings(); rig.Recenter(); LogSettings(); },
                 Help = () => "Press A to put the stage back to 2.15 m wide at 1.25 m, straight ahead." });
 
@@ -159,6 +161,32 @@ namespace CupheadVR
             menu.Tabs.Add(depthTab);
             menu.Tabs.Add(pictureTab);
             menu.Tabs.Add(options);
+        }
+
+        string SurroundText()
+        {
+            if (surround.Value == "Transparent" && rig.Active && !rig.CanTransparent) return "Transparent (not offered, black)";
+            return surround.Value == "Green" || surround.Value == "Transparent" ? surround.Value : "Black";
+        }
+
+        string SurroundHelp()
+        {
+            if (surround.Value == "Green")
+                return "Green: everything around the stage is pure green. In Virtual Desktop, turn on passthrough with chroma key on green, and your room shows around the stage.";
+            if (surround.Value == "Transparent")
+                return rig.Active && !rig.CanTransparent
+                    ? "Transparent: your headset software does not offer see-through for games, so the surround stays black. Try Green with Virtual Desktop's chroma key instead."
+                    : "Transparent: the area around the stage is see-through, so the headset software's passthrough shows behind the stage, where it offers that.";
+            return "Black: a black room around the stage. The normal choice.";
+        }
+
+        void CycleSurround(int dir)
+        {
+            var order = new[] { "Black", "Green", "Transparent" };
+            int i = Math.Max(0, Array.IndexOf(order, surround.Value));
+            surround.Value = order[(i + dir + order.Length) % order.Length];
+            PushSettings();
+            Log.LogInfo("MENU surround " + surround.Value);
         }
 
         static int PictureCode(string value) { return value == "Steady" ? 1 : value == "Panel" ? 2 : 0; }
@@ -197,6 +225,7 @@ namespace CupheadVR
             smooth.Value = true;
             edgeMatch.Value = true;
             picture.Value = "Auto";
+            surround.Value = "Black";
             Grain.Value = DefaultGrain;
             Fringe.Value = DefaultFringe;
             clickVolume.Value = 2;
@@ -224,6 +253,7 @@ namespace CupheadVR
             rig.Sharpness = resolution.Value;
             rig.Smooth = smooth.Value;
             rig.PictureMode = PictureCode(picture.Value);
+            rig.Surround = surround.Value == "Green" ? 1 : surround.Value == "Transparent" ? 2 : 0;
             rig.EdgeTrim = edgeMatch.Value;
             rig.ApplyStage();
             menu.Refresh();
@@ -305,6 +335,10 @@ namespace CupheadVR
                     picture.Value = arg == "steady" ? "Steady" : arg == "panel" ? "Panel" : "Auto";
                     PushSettings();
                     rig.LogPicture();
+                    break;
+                case "surround":
+                    surround.Value = arg == "green" ? "Green" : arg == "transparent" ? "Transparent" : "Black";
+                    PushSettings();
                     break;
                 case "picturetest":
                     foreach (var name in new[] { "SteamVR/OpenXR", "VirtualDesktopXR", "VirtualDesktopXR 1.1.0", "Virtual Desktop", "VDXR", "Oculus", "Windows Mixed Reality Runtime", "Pimax", "" })

@@ -10,7 +10,7 @@ import shutil
 import sys
 import zipfile
 
-VERSION = "1.02"
+VERSION = "1.03"
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.normpath(os.path.join(HERE, "..", "..", "build"))
 PKG = os.path.join(BUILD, "package", "CupheadVR")
