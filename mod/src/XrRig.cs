@@ -50,6 +50,7 @@ namespace CupheadVR
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int PopLogFn(StringBuilder buffer, int size);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SetMenuFn(IntPtr tex, float cx, float cy, float cz, float width, float height, float qy, float qw);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SetLayerModeFn(int mode);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void FailedLayersFn(StringBuilder outText, int size);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void RuntimeInfoFn(StringBuilder runtime, int runtimeSize, StringBuilder system, int systemSize);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void StatsFn(out uint frames, out uint layers, out uint skipped);
 
@@ -202,9 +203,29 @@ namespace CupheadVR
             xSetSurround = Fn<SetLayerModeFn>(module, "CupXR_SetSurround");
             xCanTransparent = Fn<StateFn>(module, "CupXR_CanTransparent");
             xRuntimeInfo = Fn<RuntimeInfoFn>(module, "CupXR_RuntimeInfo");
+            xLastError = Fn<StateFn>(module, "CupXR_LastError");
+            xFailedLayers = Fn<FailedLayersFn>(module, "CupXR_FailedLayers");
             renderEvent = xGetRenderEvent();
             nativeLoaded = true;
             return true;
+        }
+
+        StateFn xLastError;
+        FailedLayersFn xFailedLayers;
+
+        // Set when OpenXR could not start, in plain words for the player (LESSONS_LEARNED.md "VR fails and the player sees nothing").
+        internal string StartProblem;
+        internal float StartProblemTime;
+
+        static string DescribeStartFailure(int error, string layers)
+        {
+            const string log = " Details are in BepInEx\\LogOutput.log in the game folder.";
+            if (error == -32)
+                return "An OpenXR add-on could not load (error -32)" + (layers.Length > 0 ? ": " + layers : "")
+                     + ". Switch that add-on off for VR games, for example with the free OpenXR API Layers tool, then restart the game." + log;
+            if (error == -51 || error == -1000)
+                return "No OpenXR runtime was found (error " + error + "). In SteamVR settings, under OpenXR, set SteamVR as the OpenXR runtime, or start Virtual Desktop, then restart the game." + log;
+            return "OpenXR could not start" + (error != 0 ? " (error " + error + ")" : "") + ". Check your headset is on and its VR software is running, then restart the game." + log;
         }
 
         internal void Begin()
@@ -226,6 +247,8 @@ namespace CupheadVR
             xStart(eyeOut[0].GetNativeTexturePtr(), eyeOut[1].GetNativeTexturePtr(), EyeWidth, EyeHeight);
             GL.IssuePluginEvent(renderEvent, EventInit);
             active = true;
+            StartProblem = null;
+            renderedPairs = 0;  // counts this start only, so a failed restart is caught (1.05 test: VR off then on)
             Plugin.Log.LogInfo(string.Format("VR starting: eye {0}x{1}, stage {2} m wide at {3} m, depth x{4}", EyeWidth, EyeHeight, StageWidth, StageDistance, Separation));
             StartCoroutine(Loop());
             StartCoroutine(SnapshotSteps());
@@ -396,7 +419,19 @@ namespace CupheadVR
                     lastState = state;
                     Plugin.Log.LogInfo("XR native state " + state);
                 }
-                if (state == 3) { End(); yield break; }
+                if (state == 3)
+                {
+                    if (renderedPairs == 0)
+                    {
+                        var layers = new StringBuilder(512);
+                        xFailedLayers(layers, layers.Capacity);
+                        StartProblem = DescribeStartFailure(xLastError(), layers.ToString());
+                        StartProblemTime = Time.realtimeSinceStartup;
+                        Plugin.Log.LogWarning("VR DID NOT START: " + StartProblem);
+                    }
+                    End();
+                    yield break;
+                }
                 if (state != 2) continue;
                 // The game sets 60 fps with vsync again on every level load (seen live); the headset paces it instead.
                 if (Application.targetFrameRate != -1 || QualitySettings.vSyncCount != 0)

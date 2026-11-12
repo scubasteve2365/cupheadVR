@@ -114,9 +114,9 @@
         "to": "BepInEx\\core\\MonoMod.Utils.dll"
       },
       {
-        "from": "build\\package\\CupheadVR-1.04.zip",
-        "name": "CupheadVR-1.04.zip",
-        "to": "CupheadVR-installer\\CupheadVR-1.04.zip"
+        "from": "build\\package\\CupheadVR-1.05.zip",
+        "name": "CupheadVR-1.05.zip",
+        "to": "CupheadVR-installer\\CupheadVR-1.05.zip"
       },
       {
         "from": "mod\\install\\COMMUNITY-POST.txt",

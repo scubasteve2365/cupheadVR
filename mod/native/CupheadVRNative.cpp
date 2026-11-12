@@ -13,6 +13,7 @@
 // start leaves the game running flat.
 #include <windows.h>
 #include <d3d11_1.h>
+#include <dxgi1_6.h>
 #include <d3dcompiler.h>
 #include <cmath>
 #include <cstdarg>
@@ -157,7 +158,8 @@ template <class T> static bool GetFn(const char* name, T& out) {
     return true;
 }
 
-#define XRCHECK(call) do { XrResult r_ = (call); if (XR_FAILED(r_)) { Log("%s failed: %d", #call, (int)r_); return false; } } while (0)
+static volatile LONG g_lastXrError = 0;  // the OpenXR error that stopped the start, for the player message
+#define XRCHECK(call) do { XrResult r_ = (call); if (XR_FAILED(r_)) { g_lastXrError = (LONG)r_; Log("%s failed: %d", #call, (int)r_); return false; } } while (0)
 
 static void HereDir(char* path, DWORD size) {
     HMODULE self = nullptr;
@@ -630,6 +632,13 @@ static unsigned short DllMachine(const std::string& path) {
     return machine;
 }
 
+// Add-ons kept for this game, in case OpenXR fails with -32 and they have to be switched off after all (from OriVR 1.2.2:
+// an add-on of the right bitness can still refuse to load, ReShade's did for an Ori player, LESSONS_LEARNED.md).
+static std::vector<std::string> g_keptOffSwitches;  // their disable_environment variables
+static std::string g_keptNames;                     // names with an off switch
+static std::string g_stuckNames;                    // names without one
+static char g_failedLayers[512];                    // for the player message when VR did not start
+
 static void CheckLayers(HKEY root, const char* rootName) {
     HKEY key;
     if (RegOpenKeyExA(root, "SOFTWARE\\Khronos\\OpenXR\\1\\ApiLayers\\Implicit", 0, KEY_READ, &key) != ERROR_SUCCESS) return;
@@ -662,6 +671,13 @@ static void CheckLayers(HKEY root, const char* rootName) {
         const char* kind = machine == 0x14c ? "32-bit" : machine == 0x8664 ? "64-bit" : machine == 0 ? "unreadable" : "other";
         if (machine == 0x8664) {
             Log("OpenXR layer %s (%s): 64-bit, kept", name.c_str(), rootName);
+            std::string shown = name.empty() ? std::string(manifest) : name;
+            if (!off.empty()) {
+                g_keptOffSwitches.push_back(off);
+                g_keptNames += (g_keptNames.empty() ? "" : ", ") + shown;
+            } else {
+                g_stuckNames += (g_stuckNames.empty() ? "" : ", ") + shown;
+            }
         } else if (!off.empty()) {
             SetEnvironmentVariableA(off.c_str(), "1");
             Log("OpenXR layer %s (%s): DLL is %s, switched off for this game (%s=1). %s", name.c_str(), rootName, kind, off.c_str(), full.c_str());
@@ -676,10 +692,15 @@ static bool StartXr() {
     char path[MAX_PATH];
     HereDir(path, MAX_PATH);
     strcat_s(path, "openxr_loader.dll");
+    g_keptOffSwitches.clear();
+    g_keptNames.clear();
+    g_stuckNames.clear();
+    g_failedLayers[0] = 0;
+    g_lastXrError = 0;
     CheckLayers(HKEY_LOCAL_MACHINE, "HKLM");
     CheckLayers(HKEY_CURRENT_USER, "HKCU");
-    g_loader = LoadLibraryA(path);
-    if (!g_loader) { Log("could not load %s, error %lu", path, GetLastError()); return false; }
+    if (!g_loader) g_loader = LoadLibraryA(path);
+    if (!g_loader) { g_lastXrError = -1000; Log("could not load %s, error %lu", path, GetLastError()); return false; }
     g_gipa = (PFN_xrGetInstanceProcAddr)GetProcAddress(g_loader, "xrGetInstanceProcAddr");
     if (!g_gipa) { Log("loader has no xrGetInstanceProcAddr"); return false; }
 
@@ -711,7 +732,24 @@ static bool StartXr() {
     ici.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
     ici.enabledExtensionCount = 1;
     ici.enabledExtensionNames = exts;
-    XRCHECK(createInstance(&ici, &g_inst));
+    XrResult created = createInstance(&ici, &g_inst);
+    if (created == XR_ERROR_FILE_ACCESS_ERROR) {
+        // -32: the loader could not load an add-on (API layer). Try again with every add-on that has an off switch
+        // switched off, for this game only. Nothing in Windows changes and the add-ons keep working in other programs.
+        if (!g_keptOffSwitches.empty()) {
+            Log("OpenXR could not load an add-on (-32). Trying again with these add-ons switched off for this game only: %s", g_keptNames.c_str());
+            for (auto& v : g_keptOffSwitches) SetEnvironmentVariableA(v.c_str(), "1");
+            created = createInstance(&ici, &g_inst);
+            if (XR_SUCCEEDED(created)) Log("OpenXR started with those add-ons switched off");
+            else Log("still failing with those add-ons switched off: %d", (int)created);
+        }
+        if (XR_FAILED(created)) {
+            std::string names = g_keptNames + (g_keptNames.empty() || g_stuckNames.empty() ? "" : ", ") + g_stuckNames;
+            strncpy_s(g_failedLayers, names.c_str(), _TRUNCATE);
+            if (!g_stuckNames.empty()) Log("add-ons without an off switch, which the mod cannot skip: %s", g_stuckNames.c_str());
+        }
+    }
+    XRCHECK(created);
 
     PFN_xrGetInstanceProperties props;
     if (GetFn("xrGetInstanceProperties", props)) {
@@ -825,10 +863,53 @@ static bool StartXr() {
            GetFn("xrWaitSwapchainImage", p_waitImage) && GetFn("xrReleaseSwapchainImage", p_release);
 }
 
+static HWND g_gameWindow;
+static BOOL CALLBACK FindGameWindow(HWND h, LPARAM) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (pid == GetCurrentProcessId() && IsWindowVisible(h) && !GetWindow(h, GW_OWNER)) { g_gameWindow = h; return FALSE; }
+    return TRUE;
+}
+
+// Windows HDR for the display the game window is on. The game itself has no HDR option and the mod renders every eye,
+// the menu and the HUD into its own 8-bit textures, so this is for player reports only.
+static void LogDisplayHdr() {
+    g_gameWindow = nullptr;
+    EnumWindows(FindGameWindow, 0);
+    HMONITOR mon = g_gameWindow ? MonitorFromWindow(g_gameWindow, MONITOR_DEFAULTTONEAREST) : nullptr;
+    IDXGIDevice* dxgi = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    if (FAILED(g_dev->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi)) || FAILED(dxgi->GetAdapter(&adapter))) {
+        if (dxgi) dxgi->Release();
+        Log("display HDR: unknown (no adapter)");
+        return;
+    }
+    bool found = false;
+    IDXGIOutput* out = nullptr;
+    for (UINT i = 0; adapter->EnumOutputs(i, &out) == S_OK; i++) {
+        IDXGIOutput6* out6 = nullptr;
+        DXGI_OUTPUT_DESC1 d{};
+        if (SUCCEEDED(out->QueryInterface(__uuidof(IDXGIOutput6), (void**)&out6)) && SUCCEEDED(out6->GetDesc1(&d))) {
+            bool hdr = d.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+            bool mine = mon && d.Monitor == mon;
+            Log("display %ls: Windows HDR %s (colour space %d, %u bits per colour)%s", d.DeviceName, hdr ? "on" : "off", (int)d.ColorSpace, d.BitsPerColor,
+                mine ? ", the game's display" : "");
+            found |= mine;
+        }
+        if (out6) out6->Release();
+        out->Release();
+    }
+    if (!found) Log("display HDR: the game's display was not found among this GPU's outputs");
+    Log("game HDR: Cuphead has no HDR option; eye, menu and HUD images are the mod's own 8-bit textures");
+    adapter->Release();
+    dxgi->Release();
+}
+
 static void DoInit() {
     if (!g_src[0] || !g_src[1]) { Log("no eye textures set"); g_state = StateFailed; return; }
     g_src[0]->GetDevice(&g_dev);
     g_dev->GetImmediateContext(&g_ctx);
+    LogDisplayHdr();
     bool ok = StartXr();
     g_state = ok ? StateReady : StateFailed;
     Log(ok ? "OpenXR ready" : "OpenXR start failed, the game stays flat");
@@ -1065,6 +1146,8 @@ API void CupXR_SetMenu(void* tex, float cx, float cy, float cz, float width, flo
 }
 API void CupXR_DumpNext(const char* basePath) { strcpy_s(g_dumpPath, basePath); g_dumpWanted = 1; }
 API int CupXR_RecommendedWidth() { return g_recW; }
+API int CupXR_LastError() { return (int)g_lastXrError; }
+API void CupXR_FailedLayers(char* out, int size) { strncpy_s(out, size, g_failedLayers, _TRUNCATE); }
 API void CupXR_SetLayerMode(int mode) { g_layerMode = mode ? 1 : 0; }
 API int CupXR_ActiveLayer() { return (int)g_activeLayer; }
 API void CupXR_SetSurround(int mode) { g_surround = mode; }

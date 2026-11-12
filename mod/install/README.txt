@@ -53,7 +53,7 @@ Uninstall
 Double click "Install CupheadVR.bat" and type 2. No game files are changed by this mod.
 
 If something goes wrong
-- The game stays flat: check your OpenXR runtime is set (SteamVR or VDXR). Then look in BepInEx\LogOutput.log in the game folder. Lines starting "OpenXR layer" list the OpenXR add-ons the game sees.
+- The game stays flat: a "VR DID NOT START" message at the top of the screen says why. Press Insert to see it again in the mod menu. Check your OpenXR runtime is set (SteamVR or VDXR). Then look in BepInEx\LogOutput.log in the game folder. Lines starting "OpenXR layer" list the OpenXR add-ons the game sees.
 - Windows warns about the bat file: this mod is not signed, so Windows may ask you to confirm. Read the bat file first if you like. It is plain text.
 - Smart App Control: if it is on, Windows can block unsigned mod DLLs and the game runs flat. Windows does not make this easy to turn back on, so decide for yourself. There is no workaround in the mod.
 - When SteamVR starts, its dashboard may appear in front of the stage. Close it as usual.
@@ -73,5 +73,5 @@ Notes
 - The game keeps its own 60 updates a second, so its speed is exactly the same as flat. Smooth motion draws the moving things in between.
 - Settings are saved in BepInEx\config\com.scubasteve2365.cupheadvr.cfg in the game folder.
 
-Version 1.04. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
+Version 1.05. Credits and licences are in THIRD-PARTY-NOTICES.txt. CupheadVR is MIT licensed, by scubasteve2365.
 This is a fan mod, not made or approved by Studio MDHR.

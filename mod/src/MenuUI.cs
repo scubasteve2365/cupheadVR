@@ -41,6 +41,10 @@ namespace CupheadVR
 
         internal List<Tab> Tabs = new List<Tab>();
         internal string Version = "";
+        internal Func<string> Problem = () => null;  // set when VR did not start: shown in the menu, and on the flat screen
+        internal Func<bool> VrActive = () => false;
+        internal Func<float> ProblemTime = () => 0f;
+        GUIStyle bannerStyle;
         internal Action Closed;
         internal Func<int> Volume;          // 0 off .. 3 high
         internal KeyCode MenuKey = KeyCode.Insert;  // opens and closes the menu from a keyboard; F1 always does too
@@ -160,6 +164,10 @@ namespace CupheadVR
             Img(Red, 6, 120, -447, -258);
             help = Txt(body, 25, Ink, TextAnchor.UpperLeft, 860, 110, 8, -262);
             help.horizontalOverflow = HorizontalWrapMode.Wrap;
+            help.verticalOverflow = VerticalWrapMode.Truncate;  // best fit only shrinks text that would not fit
+            help.resizeTextForBestFit = true;  // long texts (the VR DID NOT START reason) shrink to fit the box
+            help.resizeTextMinSize = 18;
+            help.resizeTextMaxSize = 25;
             footer = Txt(body, 21, InkSoft, TextAnchor.MiddleCenter, 940, 30, 0, -343);
             SetLayer(root);
             root.SetActive(false);
@@ -288,7 +296,9 @@ namespace CupheadVR
         void Redraw()
         {
             dirty = false;
-            version.text = Version;
+            string problem = Problem();
+            version.text = problem != null ? "VR DID NOT START" : Version;
+            version.color = problem != null ? Red : InkSoft;
             for (int i = 0; i < tabText.Length; i++)
             {
                 bool on = i == tab;
@@ -310,6 +320,7 @@ namespace CupheadVR
             }
             string h = selected < rows.Count && rows[selected].Help != null ? rows[selected].Help() : "";
             bool ps = PadSupport.PlayStationNames;
+            if (problem != null) h = problem;
             help.text = ps ? h.Replace("Press A ", "Press Cross ").Replace(" A ", " Cross ").Replace(" B or ", " Circle or ") : h;
             footer.text = ps
                 ? "L1 / R1 or L2 / R2: tab     Up / down: choose     Left / right: change     Cross: select     Circle: close"
@@ -381,6 +392,29 @@ namespace CupheadVR
             }
             heldX = x;
             heldY = y;
+        }
+
+        // With VR off there is no headset to show the menu in, so it is drawn on the flat game window instead, and when VR
+        // did not start a banner says so for the first 30 seconds.
+        void OnGUI()
+        {
+            if (VrActive()) return;
+            string problem = Problem();
+            if (IsOpen && rt != null)
+            {
+                float h = Screen.height * 0.8f, w = h * rt.width / rt.height;
+                GUI.DrawTexture(new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h), rt);
+                return;
+            }
+            if (problem == null || Time.realtimeSinceStartup - ProblemTime() > 30f) return;
+            if (bannerStyle == null)
+            {
+                bannerStyle = new GUIStyle(GUI.skin.box) { fontSize = Math.Max(14, Screen.height / 45), wordWrap = true, alignment = TextAnchor.MiddleLeft };
+                bannerStyle.normal.textColor = Color.white;
+                bannerStyle.padding = new RectOffset(16, 16, 10, 10);
+            }
+            GUI.Box(new Rect(Screen.width * 0.1f, Screen.height * 0.04f, Screen.width * 0.8f, Screen.height * 0.16f),
+                "CupheadVR: VR DID NOT START. " + problem + " Press Insert for the menu.", bannerStyle);
         }
 
         void LateUpdate()

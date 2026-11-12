@@ -343,3 +343,29 @@ gameplay level with the player moving, local co-op, the flat window (does not co
 - Game speed line is on for every player while VR runs (10 s windows). Windows under 20 fps (loading) are marked
   "(loading, not counted)" and do not warn; before that change the first window during a load read 0.004 and warned.
   Live: 0.995 to 1.000 at 144 Hz after the change. Eye check 0 of 7,290,000.
+
+## 1.05: VR start failures shown to the player, -32 retry, Windows HDR log (RigB, 2026-11-12)
+
+From the LESSONS_LEARNED check in HANDOFF.md (2026-11-12). Steve said go for these three on 2026-11-12.
+
+- Windows HDR log (native `LogDisplayHdr`, before OpenXR starts): finds the game window's monitor and logs
+  IDXGIOutput6::GetDesc1 for it, then "game HDR: Cuphead has no HDR option ...". Live on RigB:
+  `display \\.\DISPLAY9: Windows HDR off (colour space 0, 8 bits per colour), the game's display`. Verified.
+- VR DID NOT START: native keeps the last OpenXR error (`CupXR_LastError`, -1000 when the loader DLL does not load) and the
+  layers that failed (`CupXR_FailedLayers`). When the start ends in the failed state with no eye pair drawn, XrRig logs
+  `VR DID NOT START: <reason>` and the menu shows it: red "VR DID NOT START" in place of the version, the reason in the help
+  box (best fit, 18 to 25 pt). With VR not running the menu is drawn on the flat screen (Insert), and a banner sits at the top
+  of the flat screen for 30 s. Reasons written for -32 (names the add-on), -51 or -1000 (set the OpenXR runtime), anything
+  else (error number, start the headset software first).
+  Test: lab commands `vr off`, `setenv XR_RUNTIME_JSON C:\VRLab\nothing_here.json` (new lab command), `vr on`: native
+  logged `created failed: -51`, the mod logged the warning, banner and flat menu checked by eye
+  (evidence\CupheadVR\2026-11-12\082602_banner105.png, 082758_flatmenu105c.png). Then `setenv XR_RUNTIME_JSON` (removes it) and
+  `vr on`: VR ran again, eye check 0 of 7,290,000. Verified.
+  Bug found on the way: `renderedPairs` was never reset, so a failed second start (VR off, then on) was not caught. Begin
+  resets it now.
+- -32 retry: when xrCreateInstance returns XR_ERROR_FILE_ACCESS_ERROR, the native side sets the off switch of every implicit
+  layer that has one (the ones the layer check kept) and tries once more, logging the result and the layers. Not verified:
+  needs a broken 64-bit implicit layer in the registry, which needs Steve's OK. The normal start path is unchanged (live).
+- Stereo of the Steady views at 1/3 size (xrdump, overworld 1): dy 0 on 545 of 553 patches, dx -62 on 520 (as 1.02).
+- GAMESPEED warns while the mod menu is open (the menu pauses the game on purpose): 69% and 49% windows in this test.
+  Expected, not a fault.

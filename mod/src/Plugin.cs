@@ -12,10 +12,10 @@ namespace CupheadVR
     // CupheadVR 1.0: the game on a stage in front of a seated player, in native stereo with depth from the game's own parallax
     // layers, smooth motion at any headset rate, and an in-headset menu (hold both sticks). VR starts by itself unless
     // VR.AutoStart is off; if OpenXR cannot start, the game stays flat. Lab probes stay available behind Lab.Commands.
-    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.4")]
+    [BepInPlugin("com.scubasteve2365.cupheadvr", "CupheadVR", "1.0.5")]
     public class Plugin : BaseUnityPlugin
     {
-        internal const string Version = "1.04";
+        internal const string Version = "1.05";
         internal static BepInEx.Logging.ManualLogSource Log;
         internal static ConfigEntry<bool> BlockSaves;
         internal static ConfigEntry<float> Grain, Fringe;
@@ -76,6 +76,9 @@ namespace CupheadVR
             menu = gameObject.AddComponent<MenuUI>();
             menu.Version = "CUPHEAD VR " + Version;
             menu.Volume = () => clickVolume.Value;
+            menu.Problem = () => rig.StartProblem;
+            menu.ProblemTime = () => rig.StartProblemTime;
+            menu.VrActive = () => rig.Active;
             try { menu.MenuKey = (KeyCode)Enum.Parse(typeof(KeyCode), menuKey.Value, true); }
             catch (Exception) { Log.LogWarning("Menu key \"" + menuKey.Value + "\" is not a key name, using Insert"); menu.MenuKey = KeyCode.Insert; }
             menu.Closed = () => { rig.ApplyStage(); rig.UpdateResolution(); };
@@ -97,7 +100,7 @@ namespace CupheadVR
 
         void Update()
         {
-            // Game speed line in every player's log while VR runs (reference v1.9, section 10).
+            // Game speed line in every player's log while VR runs (standards TECHNIQUES.md, reverse engineering and logging).
             if (rig.Active && !speedLog.On && !speedLogOff) speedLog.Begin(10f);
             if (Time.frameCount >= padCheckFrame)
             {
@@ -383,6 +386,7 @@ namespace CupheadVR
                         Log.LogInfo("PICTURETEST runtime \"" + name + "\": auto picks " + (XrRig.AutoPicksSteady(name) ? "Steady" : "Panel"));
                     break;
                 case "track": probes.Track(F(arg)); break;
+                case "setenv": System.Environment.SetEnvironmentVariable(a[0], a.Length > 1 ? a[1] : null); Log.LogInfo("SETENV " + a[0] + " = " + (a.Length > 1 ? a[1] : "(removed)")); break;
                 default: Log.LogWarning("unknown command " + line); break;
             }
         }

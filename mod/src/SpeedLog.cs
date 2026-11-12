@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace CupheadVR
 {
-    // Game speed probe (reference v1.9, section 10). Every few seconds of real time: game seconds per real second from
+    // Game speed probe (standards: every mod logs game speed, TECHNIQUES.md and TESTING.md). Every few seconds of real time: game seconds per real second from
     // Unity's own clock (Time.time), the same for fixed ticks (ticks x tick length), frames and ticks per second, tick
     // length, Unity's time scale, Cuphead's own global speed, the headset period and the game's VSync and frame cap.
     // Lab only for now: switched on with the "speedlog" command.
