@@ -1,5 +1,5 @@
 """Copied from SF6VR's tools/nullhz.py (same lab, 2026-11-10). Set RigB's fake headset (SteamVR null driver) rate for the game speed test. py -3.12 nullhz.py <hz>
-Only while RigB is free for CupheadVR (reference section 11): checks lab.py rigb first and stops if it is not.
+Only while RigB is free for CupheadVR (standards RULES.md "Sharing RigB"): checks lab.py rigb first and stops if it is not.
 Closes SteamVR through lab.py steamvr_off (which also checks the claim), edits displayFrequency and
 secondsFromVsyncToPhotons in steamvr.vrsettings in place, keeping the file's own formatting. Put it back with 144."""
 import re

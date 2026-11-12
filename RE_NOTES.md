@@ -1,5 +1,7 @@
 # CupheadVR RE notes
 
+Evidence note (2026-11-12): files under evidence\CupheadVR\2026-11-07 cited below were removed in the lab-wide cleanup of 2026-11-12 (evidence\CLEANUP_LOG.md); the findings stand as written here. Files cited from 2026-11-08 and 2026-11-10 are kept.
+
 Started on RigB, 2026-11-07. "Live" means seen in the running game this session; "static" means read from the decompile only.
 Decompiled code: C:\VRLab\re\CupheadVR\decomp (ILSpy 9.1, not in git). Evidence: C:\VRLab\evidence\CupheadVR\2026-11-07.
 
@@ -273,14 +275,14 @@ setting (Stage tab, config Picture.Surround): Black (default), Green, Transparen
 
 RigB (SteamVR 2.18.4 null driver), evidence/CupheadVR/2026-11-10/v103: 42 extensions, blend modes "opaque" only, so
 Transparent falls back to black there (logged). Steady green: 59% of the view pure green, the stage box starts with no
-blended pixels (sg_view_0.bmp). Headset Window shows green around the stage in Steady and Panel (steady_green.png,
+blended pixels (sg_view_0.png). Headset Window shows green around the stage in Steady and Panel (steady_green.png,
 panel_green.png, looked at); in Panel the outer view edge shades darker in that window, not verified on VD.
 Eye check 0 of 7,290,000. Not verified: anything on VDXR.
 Timing check (OriVR session reported restarting SteamVR on RigB 07:57 to 08:03 on 2026-11-10): every 1.03 result above was
 taken by 07:55:21 (game log last written then, captures 07:54:41 to 07:55:10), with the session at state 5 and 144 Hz
 throughout. The 1.03 results stand.
 
-## Game speed in VR, reference v1.9 (RigB, 2026-11-10)
+## Game speed in VR, standards TESTING.md and STANDARDS.md "Build 1 baseline" (RigB, 2026-11-10)
 
 Code search (decompile, Steam build 20241530): no writes to Time.timeScale, fixedDeltaTime or maximumDeltaTime in the
 game's code (1/60 s step and 1/3 s maximum come from the project settings). targetFrameRate = 60 in CupheadStartScene.cs:12

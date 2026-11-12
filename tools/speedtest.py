@@ -1,4 +1,4 @@
-"""Game speed test in VR on RigB (reference v1.9, section 2a). py -3.12 speedtest.py [rates...]  (default 72 90 120 144)
+"""Game speed test in VR on RigB (standards STANDARDS.md "Build 1 baseline", TESTING.md). py -3.12 speedtest.py [rates...]  (default 72 90 120 144)
 
 For each rate: checks RigB is free for CupheadVR (stops the whole run if not), sets the fake headset's rate with
 nullhz.py (which closes SteamVR first), launches the game fresh (SteamVR starts fresh with it), enters the lab slot,
